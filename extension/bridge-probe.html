@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>矩阵本机读取验证</title>
+<style>
+body{max-width:680px;margin:32px auto;padding:0 20px;font:16px/1.6 system-ui;color:#18212f}h1{font-size:24px}
+button{padding:10px 18px;margin-top:16px;cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f5f7;padding:16px}
+img{display:block;max-width:100%;max-height:400px;margin-top:16px}label{display:block;margin-top:16px}
+</style>
+<h1>本机读取验证（阶段一）</h1>
+<p>验证 Windows Chrome 能否读取 WSL 原始正文与图片。只读取指定准备包，不填入编辑器、不保存或发布。</p>
+<label for="connection">选择本机助手生成的 connection.json（私密连接文件）</label>
+<input id="connection" type="file" accept=".json,application/json">
+<p>连接文件仅在当前验证页使用，关闭页面即清除。请勿上传或分享此文件。</p>
+<button id="read" disabled>读取并核对文件</button>
+<pre id="result" role="status" aria-live="polite">尚未连接。</pre>
+<img id="preview" hidden alt="读取到的第一张原始图片">
+<p>读取和 SHA 校验通过，不代表五平台来源规则、头条包外回执、编辑器填入或重启恢复已经验收。</p>
+<script src="bridge-client.js"></script>
+<script src="bridge-probe.js"></script>
+</html>

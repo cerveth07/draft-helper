@@ -1,0 +1,27 @@
+name: 缺陷反馈
+description: 报告导入、排版、导出或平台填入问题
+body:
+  - type: input
+    id: version
+    attributes:
+      label: SyncPress 版本、浏览器和操作系统
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 说明入口与操作顺序，优先提供合成稿件；不要上传账号凭证、真实连接文件或未公开内容。
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏日志与截图
+      description: 可附转换说明、错误信息及截图；请先去除私密链接、Token、账号和个人数据。

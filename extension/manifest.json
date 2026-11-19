@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "SyncPress｜跨平台富文本排版与分发器",
+  "version": "1.0.0",
+  "description": "导入、编辑和保留富文本排版，预览格式差异，生成多平台准备包并由用户确认填入。",
+  "permissions": [
+    "activeTab",
+    "debugger",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "https://mp.weixin.qq.com/*",
+    "https://*.mp.weixin.qq.com/*",
+    "https://mp.yidianzixun.com/*",
+    "https://mp.toutiao.com/*",
+    "https://om.qq.com/*",
+    "https://*.om.qq.com/*",
+    "https://mp.sohu.com/*",
+    "https://*.mp.sohu.com/*",
+    "https://card.weibo.com/*",
+    "https://mmbiz.qpic.cn/*",
+    "https://res.wx.qq.com/*",
+    "https://mmbiz.qlogo.cn/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "action": {
+    "default_title": "SyncPress · 排版与分发",
+    "default_popup": "popup.html"
+  },
+  "version_name": "1.0"
+}

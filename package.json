@@ -1,0 +1,35 @@
+{
+  "name": "syncpress",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cross-platform rich-text layout and user-controlled draft distribution",
+  "scripts": {
+    "check": "node tools/check-source.mjs",
+    "test": "node tools/run-checks.mjs unit",
+    "test:browser": "node tools/run-checks.mjs browser",
+    "test:layout": "node --test extension/tests/layout-core.test.cjs && node extension/tests/layout.browser.cjs",
+    "test:sohu-title": "node extension/tests/sohu-title.browser.cjs",
+    "test:toutiao-format": "node --test extension/tests/toutiao-format.test.cjs && node extension/tests/toutiao-format.browser.cjs && node extension/tests/toutiao-image.browser.cjs && node extension/toutiao-fill.check.cjs",
+    "test:sohu-format": "node --test extension/tests/sohu-format.test.cjs && node extension/tests/sohu-upload.browser.cjs && node extension/tests/sohu-align.browser.cjs && node extension/tests/sohu-title.browser.cjs",
+    "test:yidian-format": "node --test extension/tests/yidian-format.test.cjs extension/tests/yidian-copy.test.cjs extension/tests/yidian-upload.test.js && node extension/tests/yidian-format.browser.cjs && node extension/yidian-format.check.cjs && node extension/yidian-fill.check.cjs && node extension/yidian-late-write.check.cjs",
+    "test:authoring": "node extension/tests/authoring.browser.cjs",
+    "test:authoring-packages": "node extension/tests/authoring-packages.browser.cjs",
+    "release:pack": "node tools/package-release.mjs"
+  },
+  "optionalDependencies": {
+    "playwright-core": "1.63.0"
+  },
+  "license": "MIT",
+  "author": "SyncPress contributors",
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "browser-extension",
+    "wechat",
+    "article-editor",
+    "multiplatform",
+    "offline"
+  ],
+  "displayVersion": "v1.0"
+}

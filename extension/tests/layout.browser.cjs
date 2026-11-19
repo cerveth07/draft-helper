@@ -1,0 +1,103 @@
+'use strict';
+const {chromium}=require(process.env.DRAFT_HELPER_PLAYWRIGHT_MODULE||'playwright-core');
+const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict');
+const L=require('../layout-core.js'),D=require('../distribution-core.js');
+const {png,source,asFile}=require('./layout-fixtures.cjs');
+const {pathToFileURL}=require('node:url');
+const repo=path.resolve(__dirname,'../..'),extension=path.join(repo,'extension');
+const out=process.env.DRAFT_HELPER_TEST_OUTPUT||fs.mkdtempSync(path.join(os.tmpdir(),'draft-layout-qa-'));
+const temp=fs.mkdtempSync(path.join(os.tmpdir(),'draft-layout-profile-'));
+function unpack(buffer){
+  const files=new Map();let at=0;
+  while(buffer.readUInt32LE(at)===0x04034b50){
+    const size=buffer.readUInt32LE(at+18),length=buffer.readUInt16LE(at+26),extra=buffer.readUInt16LE(at+28);
+    const name=buffer.subarray(at+30,at+30+length).toString('utf8'),start=at+30+length+extra;
+    files.set(name,buffer.subarray(start,start+size));at=start+size;
+  }
+  return files;
+}
+(async()=>{
+ fs.mkdirSync(out,{recursive:true});
+ const {renderLayout}=await import(pathToFileURL(path.join(repo,'tools/layout-render-node.mjs')).href);
+ process.env.DRAFT_HELPER_BROWSER_PATH||=chromium.executablePath();
+ const ordinary=source();
+ const converted=await L.prepare(ordinary,renderLayout);
+ assert.equal(converted.plan.blocks.length,1,'direct image children stay together');
+ const dims=D.imageDimensions(new Uint8Array(await converted.assets.get('assets/'+converted.plan.blocks[0].image.bundleFile).arrayBuffer()));
+ assert.equal(dims.width,converted.plan.blocks[0].width*2,'2x screenshot width');
+ assert.equal(dims.height,converted.plan.blocks[0].height*2,'2x screenshot height');
+ const card=source('<p>普通开头</p><section style="padding:20px;background-image:url(&quot;WECHATIMGPH_1_END&quot;);background-size:cover;color:white"><h2>白字背景卡片</h2><a href="https://example.com/source">来源链接</a></section><p>普通结尾</p>');
+ const cardResult=await L.prepare(card,renderLayout);
+ assert.equal(cardResult.plan.blocks.length,1);assert.equal(cardResult.plan.blocks[0].links.length,1);
+ assert.match(cardResult.plan.blocks[0].text,/白字背景卡片/);
+ const gallery=source('<div style="width:320px;overflow-x:auto"><div style="width:200%;display:flex"><a href="https://example.com/gallery"><img style="width:120px" src="WECHATIMGPH_1_END"></a><img style="width:50%" src="WECHATIMGPH_2_END"></div></div>');
+ const galleryResult=await L.prepare(gallery,renderLayout);
+ assert.equal(galleryResult.plan.blocks.length,1);assert.ok(galleryResult.plan.blocks[0].reasons.includes('carousel'));
+ assert.equal(galleryResult.plan.blocks[0].links[0].href,'https://example.com/gallery');
+ assert.ok(galleryResult.plan.blocks[0].height>400,'both slides fully expanded, not just first viewport');
+ const animated=source('<div style="display:flex;gap:10px"><img style="width:120px;height:80px" src="WECHATIMGPH_1_END"><p>动图旁边的说明</p></div>');
+ const renderAnimated=async(input,progress)=>renderLayout({...input,animations:['WECHATIMGPH_1_END']},progress);
+ await assert.rejects(L.prepare(animated,renderAnimated),/不能静默转成静图/);
+ console.log('PASS actual Chrome: 2x multi-image capture, background/text/link card, full scrolling gallery, animation guard');
+
+ const context=await chromium.launchPersistentContext(temp,{channel:'chromium',headless:true,viewport:{width:1500,height:1050},args:['--disable-extensions-except='+extension,'--load-extension='+extension]});
+ try{
+  const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  page.on('dialog',dialog=>dialog.accept());
+  await page.goto('chrome://extensions');
+  const targets=await page.evaluate(()=>new Promise(resolve=>chrome.developerPrivate.getExtensionsInfo({includeDisabled:true},resolve)));
+  const target=targets.find(t=>t.name.startsWith('SyncPress'));assert.ok(target);assert.deepEqual(target.manifestErrors,[]);
+  await page.goto('chrome-extension://'+target.id+'/studio.html');await page.evaluate(()=>DraftStudio.ready);
+  assert.match(await page.title(),/SyncPress/);
+  assert.equal(await page.locator('#matrix-layout').inputValue(),'auto');
+  const html=ordinary.html.replace('WECHATIMGPH_1_END','data:image/png;base64,'+png(220,20,30).toString('base64')).replace('WECHATIMGPH_2_END','data:image/png;base64,'+png(20,40,220).toString('base64'));
+  await page.setInputFiles('#source-file',{name:'双图并排.html',mimeType:'text/html',buffer:Buffer.from('<!doctype html><title>特殊排版回归测试</title>'+html)});
+  await page.waitForFunction(()=>DraftStudio.snapshot().html.includes('开头可编辑文字'));
+  const originalStateHtml=await page.evaluate(()=>DraftStudio.snapshot().html);
+  await page.selectOption('#matrix-platform','sohu');
+  await page.click('#matrix-layout-check');
+  await page.waitForFunction(()=>document.querySelector('#matrix-layout-status').textContent.includes('1 处特殊排版'),{timeout:30000});
+  assert.equal(await page.locator('#matrix-layout-preview img').count(),1);
+  await page.locator('#matrix-layout-results').evaluate(el=>el.open=true);
+  await page.screenshot({path:path.join(out,'workbench-layout.png'),fullPage:true});
+  const download=page.waitForEvent('download');await page.click('#matrix-export');
+  const zip=await download;await zip.saveAs(path.join(out,'layout-ui-export.zip'));
+  const files=unpack(fs.readFileSync(path.join(out,'layout-ui-export.zip'))),proof=JSON.parse(files.get('source-wechat.json')),manifest=JSON.parse(files.get('manifest.json'));
+  assert.equal(proof.layout.blocks.length,1);assert.equal(manifest.contentImages.length,1);
+  assert.equal(await page.evaluate(()=>DraftStudio.snapshot().html),originalStateHtml,'conversion never edits WeChat working copy');
+  const raw=files.get('raw-content.txt').toString('utf8');assert.match(raw,/开头可编辑文字/);assert.match(raw,/结尾可编辑文字/);
+  const allAssets=new Map([...files].map(([n,b])=>[n,asFile(b)]));
+  await D.verify({html:raw,manifest,manifestText:files.get('manifest.json').toString('utf8'),report:JSON.parse(files.get('preparation-report.json')),assets:allAssets},'sohu');
+  const asset=files.get('assets/'+manifest.contentImages[0].bundleFile);
+  const uiDims=D.imageDimensions(asset);assert.equal(uiDims.width,proof.layout.blocks[0].width*2);assert.equal(uiDims.height,proof.layout.blocks[0].height*2);
+  fs.writeFileSync(path.join(out,'dual-image.png'),asset);
+  const sample=await page.evaluate(async data=>{const im=new Image();im.src=data;await im.decode();const c=document.createElement('canvas');c.width=im.width;c.height=im.height;const ctx=c.getContext('2d');ctx.drawImage(im,0,0);return [Array.from(ctx.getImageData(Math.floor(im.width*.2),Math.floor(im.height*.5),1,1).data),Array.from(ctx.getImageData(Math.floor(im.width*.8),Math.floor(im.height*.5),1,1).data)];},'data:image/png;base64,'+asset.toString('base64'));
+  assert.ok(sample[0][0]>180&&sample[0][2]<80,'left red photo captured');assert.ok(sample[1][2]>180&&sample[1][0]<80,'right blue photo captured');
+  await page.selectOption('#matrix-layout','preserve');
+  await page.click('#matrix-layout-check');
+  await page.waitForFunction(()=>document.querySelector('#matrix-layout-status').textContent.includes('可能拆散'));
+  assert.equal(await page.locator('#matrix-layout-results').isVisible(),false);
+  assert.deepEqual(errors,[]);
+  assert.equal((await context.pages()).filter(p=>p.url().includes('layout-render.html')).length,0,'render tab is closed');
+  const imported=path.join(temp,'imported-package');
+  for(const [name,bytes] of files){const file=path.join(imported,name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,bytes);}
+  await page.setInputFiles('#matrix-bundle',imported);
+  await page.waitForFunction(()=>document.querySelector('#matrix-bundle-status').textContent.includes('已选择：'));
+  assert.equal(await page.locator('#matrix-layout-check').isDisabled(),true,'existing package stays intact without re-rendering');
+  assert.match(await page.locator('#matrix-layout-status').textContent(),/直接使用包内排版/);
+  await page.click('#matrix-bundle-clear');
+  const gif='R0lGODlhFAAUAIEAANwUHgAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAFAAUAAAIIgABCBxIsKDBgwgTKlzIsKHDhxAjSpxIsaLFixgzatxoMSAAIfkEAQoAAQAsAAAAABQAFACBFCjcAAAAAAAAAAAACCIAAQgcSLCgwYMIEypcyLChw4cQI0qcSLGixYsYM2rcaDEgADs=';
+  const badHtml='<title>动图保护测试</title><div style="display:flex"><img style="width:120px;height:80px" src="data:image/gif;base64,'+gif+'"><p>旁边说明保持动态</p></div>';
+  await page.setInputFiles('#source-file',{name:'animation.html',mimeType:'text/html',buffer:Buffer.from(badHtml)});
+  await page.waitForFunction(()=>DraftStudio.snapshot().html.includes('旁边说明保持动态'));
+  assert.equal(await page.locator('#matrix-layout-results').isVisible(),false,'new import clears previous layout preview');
+  await page.selectOption('#matrix-layout','auto');
+  await page.click('#matrix-layout-check');
+  await page.waitForFunction(()=>document.querySelector('#matrix-layout-status').textContent.includes('不能静默转成静图'));
+  assert.equal(await page.locator('#matrix-layout-check').isEnabled(),true,'failed render unlocks controls');
+  assert.equal((await context.pages()).filter(p=>p.url().includes('layout-render.html')).length,0,'failed render also closes its own tab');
+  assert.deepEqual(errors,[]);
+  console.log('PASS real MV3 UI: import -> auto detect -> preview -> ZIP -> contract verify; preserve switch; no page errors; no render-tab leaks');
+ }finally{await context.close();}
+ console.log('Evidence: '+out);
+})().catch(error=>{console.error(error);process.exitCode=1;});
