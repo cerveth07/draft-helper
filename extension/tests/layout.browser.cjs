@@ -55,11 +55,13 @@ function unpack(buffer){
   await page.waitForFunction(()=>DraftStudio.snapshot().html.includes('开头可编辑文字'));
   const originalStateHtml=await page.evaluate(()=>DraftStudio.snapshot().html);
   await page.selectOption('#matrix-platform','sohu');
+  await page.click('#matrix-advanced > summary');
   await page.click('#matrix-layout-check');
   await page.waitForFunction(()=>document.querySelector('#matrix-layout-status').textContent.includes('1 处特殊排版'),{timeout:30000});
   assert.equal(await page.locator('#matrix-layout-preview img').count(),1);
   await page.locator('#matrix-layout-results').evaluate(el=>el.open=true);
   await page.screenshot({path:path.join(out,'workbench-layout.png'),fullPage:true});
+  await page.click('#export-menu > summary');
   const download=page.waitForEvent('download');await page.click('#matrix-export');
   const zip=await download;await zip.saveAs(path.join(out,'layout-ui-export.zip'));
   const files=unpack(fs.readFileSync(path.join(out,'layout-ui-export.zip'))),proof=JSON.parse(files.get('source-wechat.json')),manifest=JSON.parse(files.get('manifest.json'));

@@ -13,13 +13,14 @@ try{const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.p
   for(const target of targets){await page.selectOption('#matrix-platform',target);const index=JSON.parse(fs.readFileSync(path.join(folder,'matrix-format.json'))).platforms[target];
    await page.waitForFunction(title=>document.querySelector('#matrix-title').value===title,index.title);
    await page.waitForFunction(count=>document.querySelectorAll('#matrix-log-entries li').length===count,JSON.parse(fs.readFileSync(path.join(folder,index.files.report))).processing_log.length);
+   if(!await page.locator('#matrix-layout-check').isVisible())await page.click('#matrix-advanced > summary');
    await page.click('#matrix-layout-check');await page.waitForFunction(()=>!document.querySelector('#matrix-export').disabled);
    await page.click('#matrix-format-check');await page.waitForSelector('#matrix-format-dialog[open]');assert.match(await page.locator('#matrix-format-title').textContent(),new RegExp(index.title.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
    const frame=page.frameLocator('#matrix-format-frame');await frame.locator('img').first().waitFor();
    await page.waitForFunction(()=>{const doc=document.querySelector('#matrix-format-frame').contentDocument;return doc&&[...doc.images].every(i=>i.complete&&i.naturalWidth>0)});
    assert.equal(await frame.locator('img').count(),index.contentImages.length);
    if(out){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:path.join(out,'workbench-'+target+'.png')});}
-   await page.keyboard.press('Escape');const downloadPromise=page.waitForEvent('download');await page.click('#matrix-export');const download=await downloadPromise;const zip=fs.readFileSync(await download.path());
+   await page.keyboard.press('Escape');await page.click('#export-menu > summary');const downloadPromise=page.waitForEvent('download');await page.click('#matrix-export');const download=await downloadPromise;const zip=fs.readFileSync(await download.path());
    assert.ok(zip.includes(Buffer.from('matrix-'+target+'-content.txt')));assert.ok(zip.includes(Buffer.from('raw-content.txt')));assert.ok(zip.includes(Buffer.from('matrix-format.json')));
    console.log('PASS workbench import, '+target+' title/log/layout/preview, '+index.contentImages.length+' decoded images and complete sealed ZIP');
   }

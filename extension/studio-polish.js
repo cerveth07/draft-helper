@@ -75,18 +75,112 @@
   }
   width.addEventListener('change', () => store.set('draft-helper-preview-width', width.value));
 
-  /* ---------- 空状态快捷入口 ---------- */
-  const showImport = () => { if (q('left-import-panels').hidden) q('author-import-open').click(); };
-  q('empty-open-link')?.addEventListener('click', () => {
-    showImport();
-    const input = q('wechat-source-url');
-    input.scrollIntoView({block: 'center', behavior: 'smooth'});
-    input.focus();
-  });
-  q('empty-open-file')?.addEventListener('click', () => q('source-file').click());
-  q('empty-paste')?.addEventListener('click', () => q('paste-open').click());
+  /* ---------- 桌面侧栏宽度 ---------- */
+  const workspace = document.querySelector('.workspace');
+  const handles = {left: q('left-panel-resize'), right: q('right-panel-resize')};
+  const sides = Object.keys(handles);
+  const minimum = {left: 220, right: 228};
+  const preferenceKey = side => 'draft-helper-panel-' + side + '-width';
+  const preferred = Object.fromEntries(sides.map(side => {
+    const saved = Number(store.get(preferenceKey(side)));
+    return [side, Number.isFinite(saved) ? saved : 0];
+  }));
+  const widths = {};
+  let available = 0;
+  let drag = null;
+  const maximum = side => available - widths[side === 'left' ? 'right' : 'left'];
 
-  q('notice-adjust')?.addEventListener('click', () => q('mode-adjust').click());
+  function showPanelWidths() {
+    for (const side of sides) {
+      const handle = handles[side];
+      workspace.style.setProperty('--' + side + '-panel-width', widths[side] + 'px');
+      handle.setAttribute('aria-valuemin', minimum[side]);
+      handle.setAttribute('aria-valuemax', maximum(side));
+      handle.setAttribute('aria-valuenow', widths[side]);
+      handle.setAttribute('aria-valuetext', widths[side] + ' 像素');
+    }
+  }
+
+  function fitPanels() {
+    if (!handles.left.offsetWidth) return;
+    const style = getComputedStyle(workspace);
+    const widthOf = name => parseFloat(style.getPropertyValue(name));
+    const minimumTotal = minimum.left + minimum.right;
+    available = Math.max(minimumTotal, workspace.clientWidth - widthOf('--canvas-min-width') - 2 * widthOf('--panel-divider-width'));
+    const left = Math.max(minimum.left, preferred.left || widthOf('--left-panel-default'));
+    const right = Math.max(minimum.right, preferred.right || widthOf('--right-panel-default'));
+    const wantedExtra = left + right - minimumTotal;
+    const scale = wantedExtra > available - minimumTotal ? (available - minimumTotal) / wantedExtra : 1;
+    widths.left = Math.round(minimum.left + (left - minimum.left) * scale);
+    widths.right = Math.min(available - widths.left, Math.round(minimum.right + (right - minimum.right) * scale));
+    showPanelWidths();
+  }
+
+  function resizePanel(side, next) {
+    widths[side] = Math.max(minimum[side], Math.min(maximum(side), Math.round(next)));
+    showPanelWidths();
+  }
+
+  function rememberPanelWidths() {
+    for (const side of sides) {
+      preferred[side] = widths[side];
+      store.set(preferenceKey(side), widths[side]);
+    }
+  }
+
+  for (const side of sides) {
+    const handle = handles[side], direction = side === 'left' ? 1 : -1;
+    handle.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || drag) return;
+      handle.setPointerCapture(event.pointerId);
+      handle.focus({preventScroll: true});
+      drag = {side, pointerId: event.pointerId, x: event.clientX, width: widths[side]};
+      workspace.dataset.resizing = side;
+      event.preventDefault();
+    });
+    handle.addEventListener('pointermove', event => {
+      if (drag?.side === side && drag.pointerId === event.pointerId) {
+        resizePanel(side, drag.width + (event.clientX - drag.x) * direction);
+      }
+    });
+    handle.addEventListener('lostpointercapture', event => {
+      if (drag?.side !== side || drag.pointerId !== event.pointerId) return;
+      if (drag.width !== widths[side]) rememberPanelWidths();
+      delete workspace.dataset.resizing;
+      drag = null;
+    });
+    handle.addEventListener('keydown', event => {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      const steps = {ArrowLeft: -1, ArrowRight: 1};
+      const step = steps[event.key];
+      if (!step && event.key !== 'Home' && event.key !== 'End') return;
+      event.preventDefault();
+      resizePanel(side, step ? widths[side] + 12 * step * direction : event.key === 'Home' ? minimum[side] : maximum(side));
+      rememberPanelWidths();
+    });
+  }
+  window.addEventListener('resize', fitPanels);
+  fitPanels();
+
+  for (const menu of document.querySelectorAll('.action-menu')) {
+    const toggle = menu.querySelector('summary');
+    const close = () => {
+      menu.open = false;
+      if (menu.contains(document.activeElement)) toggle.focus();
+    };
+    menu.addEventListener('click', event => {
+      if (event.target.closest('button')) close();
+    });
+    menu.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && menu.open) {
+        event.preventDefault();
+        close();
+      }
+    });
+    document.addEventListener('pointerdown', event => {
+      if (menu.open && !menu.contains(event.target)) menu.open = false;
+    });
+  }
 
   /* ---------- 拖到窗口任意位置导入 ---------- */
   // While a file is dragged over the window, a full-size overlay takes the drop
@@ -121,20 +215,26 @@
     // Position inside the scrolling panel, independent of offsetParent.
     const topOf = target => target.getBoundingClientRect().top - panel.getBoundingClientRect().top + panel.scrollTop;
     const smooth = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const scrollable = () => panel.scrollHeight > panel.clientHeight + 4;
+    const stacked = matchMedia('(max-width: 880px)');
     for (const button of buttons) button.addEventListener('click', () => {
       const target = q(button.dataset.jump);
       if (!target) return;
-      panel.scrollTo({top: Math.max(0, topOf(target) - nav.offsetHeight - 8), behavior: smooth() ? 'smooth' : 'auto'});
-      mark(button.dataset.jump);
+      const behavior = smooth() ? 'smooth' : 'auto';
+      if (stacked.matches) target.scrollIntoView({block: 'start', behavior});
+      else panel.scrollTo({top: Math.max(0, topOf(target) - nav.offsetHeight), behavior});
+      mark(target.id);
     });
     const sync = () => {
-      const line = panel.scrollTop + nav.offsetHeight + 40;
+      if (!scrollable()) return;
+      const line = panel.scrollTop + nav.offsetHeight + 26;
       let current = targets[0]?.id;
       for (const target of targets) if (target && topOf(target) <= line) current = target.id;
-      if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 4) current = targets.at(-1)?.id || current;
+      if (panel.scrollTop > 4 && panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 4) current = targets.at(-1)?.id || current;
       mark(current);
     };
     panel.addEventListener('scroll', () => requestAnimationFrame(sync), {passive: true});
+    mark(targets[0]?.id);
     sync();
   }
 })();

@@ -18,6 +18,20 @@ try{
  await page.goto('chrome-extension://'+info.id+'/studio.html');await page.evaluate(()=>DraftStudio.ready);assert.match(await page.title(),/SyncPress/);assert.match(page.url(),/studio.html/);
  await page.setInputFiles('#source-file',{name:'编排回归测试.html',mimeType:'text/html',buffer:Buffer.from('<title>文章编排与平台适配功能回归测试</title>'+article)});await page.waitForFunction(()=>DraftStudio.snapshot().html.includes('第一节：主题分享'));
  const baseline=await page.evaluate(()=>DraftStudio.snapshot());
+ assert.equal(await page.locator('.brand small').count(),0);
+ const panelWidth=side=>page.locator('#workbench-'+side+'-panel').evaluate(el=>el.getBoundingClientRect().width);
+ async function dragPanel(side,offset){
+   const handle=await page.locator('#'+side+'-panel-resize').boundingBox();
+   const x=handle.x+handle.width/2,y=handle.y+handle.height/2;
+   await page.mouse.move(x,y);await page.mouse.down();
+   await page.mouse.move(x+offset,y,{steps:6});await page.mouse.up();
+ }
+ const left=await panelWidth('left'),right=await panelWidth('right');
+ await dragPanel('left',60);await dragPanel('right',-48);
+ assert.equal(await panelWidth('left'),left+60);
+ assert.equal(await panelWidth('right'),right+48);
+ await page.locator('#right-panel-resize').press('ArrowRight');
+ assert.equal(await panelWidth('right'),right+36);
  await page.click('#mode-adjust');await page.click('#author-outline-open');
  const row=text=>page.locator('.outline-row').filter({has:page.locator('.outline-label',{hasText:text})});
  await row('第一节：主题分享').locator('button').click();await page.click('[data-author-action=section]');assert.match(await page.locator('#author-selection-count').textContent(),/4/);
@@ -44,12 +58,23 @@ try{
  await page.locator('.author-brush summary').click();for(const field of ['typography','emphasis','spacing','alignment'])await page.locator('[data-brush-field='+field+']').uncheck();await page.click('#author-brush-copy');await row('这是相邻的第二段正文').locator('button').click();await page.click('#author-brush-apply');assert.equal(await page.frameLocator('#article-frame').locator('#follow').evaluate(el=>getComputedStyle(el).color),'rgb(187, 51, 17)');assert.equal(await page.frameLocator('#article-frame').locator('#follow').evaluate(el=>getComputedStyle(el).fontWeight),'700');
  assert.ok((await page.evaluate(()=>DraftStudio.snapshot())).html.includes('https://example.org/reference'));assert.ok((await page.evaluate(()=>DraftStudio.snapshot())).html.includes(image));
  console.log('PASS arbitrary multi-selection, format painter, selected-text color, links and original image bytes');
- await page.click('#author-components-open');await page.waitForSelector('#component-library-dialog[open]');await page.screenshot({path:path.join(out,'component-library.png')});await page.locator('.component-card').filter({hasText:'嘉宾简介'}).locator('button').click();await page.fill('[data-component-field=name]','测试嘉宾教授');await page.fill('[data-component-field=role]','测试单位与职务');await page.fill('[data-component-field=topic]','在测试论坛上围绕传播创新作主题分享。');await page.click('#component-insert');
- assert.ok((await page.evaluate(()=>DraftStudio.snapshot())).html.includes('测试嘉宾教授'));
+ await page.click('#author-components-open');await page.waitForSelector('#component-library-dialog[open]');
+ assert.deepEqual(await page.locator('.component-card strong').allTextContents(),
+   ['小标题','重点提示','引用','要点列表','图片与图注','双图组合','分隔线','文末署名','链接']);
+ await page.screenshot({path:path.join(out,'component-library.png')});
+ await page.locator('.component-card').filter({hasText:'重点提示'}).locator('button').click();
+ await page.fill('[data-component-field=title]','测试提示标题');
+ await page.fill('[data-component-field=body]','一段给读者的补充说明。');
+ await page.click('#component-insert');
+ assert.ok((await page.evaluate(()=>DraftStudio.snapshot())).html.includes('测试提示标题'));
  await page.click('[data-author-action=save-component]');await page.click('#author-components-open');await page.selectOption('#component-category','我的收藏');assert.equal(await page.locator('.component-card').count(),1);
- await page.locator('[data-close=component-library-dialog]').click();await page.waitForFunction(()=>document.getElementById('save-state').textContent==='已保存到本机');await page.reload();await page.evaluate(()=>DraftStudio.ready);await page.click('#author-components-open');await page.selectOption('#component-category','我的收藏');assert.equal(await page.locator('.component-card').count(),1);
+ await page.locator('[data-close=component-library-dialog]').click();await page.waitForFunction(()=>document.getElementById('save-state').textContent==='已保存到本机');await page.reload();await page.evaluate(()=>DraftStudio.ready);
+ assert.equal(await panelWidth('left'),left+60);
+ assert.equal(await panelWidth('right'),right+36);
+ await page.click('#author-components-open');await page.selectOption('#component-category','我的收藏');assert.equal(await page.locator('.component-card').count(),1);
+ await page.click('#component-management > summary');
  const downloadPromise=page.waitForEvent('download');await page.click('#component-export');const download=await downloadPromise,library=JSON.parse(fs.readFileSync(await download.path(),'utf8'));assert.equal(library.schema,'DRAFT_HELPER_COMPONENTS_V1');assert.equal(library.components.length,1);
- await page.locator('.component-card button').first().click();await page.click('#component-insert');assert.equal(await page.evaluate(()=>{const d=new DOMParser().parseFromString(DraftStudio.snapshot().html,'text/html');return [...d.querySelectorAll('[data-dh-group]')].filter(n=>n.textContent.includes('测试嘉宾教授')).length}),2);
+ await page.locator('.component-card button').first().click();await page.click('#component-insert');assert.equal(await page.evaluate(()=>{const d=new DOMParser().parseFromString(DraftStudio.snapshot().html,'text/html');return [...d.querySelectorAll('[data-dh-group]')].filter(n=>n.textContent.includes('测试提示标题')).length}),2);
  assert.equal(await page.evaluate(()=>{try{DraftComponents.validate({version:1,id:'custom-bad',name:'bad',html:'<img src=x onerror="alert(1)">'});return false;}catch{return true;}}),true);
  console.log('PASS built-in components, editable fields, custom collection, persistence, export/reinsert and unsafe-import rejection');
  await page.click('#author-components-open');await page.selectOption('#component-category','图片');await page.locator('.component-card').filter({hasText:'双图组合'}).locator('button').click();
@@ -69,8 +94,10 @@ try{
  await page.waitForFunction(text=>{const d=document.getElementById('matrix-format-frame').contentDocument,el=[...d.querySelectorAll('p')].find(p=>p.textContent===text);return el&&el.getBoundingClientRect().top>=-100&&el.getBoundingClientRect().top<160;},visibleSourceText);
  await page.screenshot({path:path.join(out,'compare-desktop.png')});await page.locator('[data-close=matrix-format-dialog]').click();
  console.log('PASS source/platform comparison, decoded images, change location and synchronized scrolling');
- await page.setViewportSize({width:620,height:980});await page.screenshot({path:path.join(out,'authoring-narrow.png')});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
- const original=await page.evaluate(()=>DraftStudio.snapshot().html);assert.ok(original.includes(image));assert.ok(norm(original).includes('开头'));assert.equal(baseline.html.includes('测试嘉宾教授'),false);assert.deepEqual(errors,[]);
+ await page.setViewportSize({width:620,height:980});
+ for(const side of ['left','right'])assert.equal(await page.locator('#'+side+'-panel-resize').isVisible(),false);
+ await page.screenshot({path:path.join(out,'authoring-narrow.png')});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
+ const original=await page.evaluate(()=>DraftStudio.snapshot().html);assert.ok(original.includes(image));assert.ok(norm(original).includes('开头'));assert.equal(baseline.html.includes('测试提示标题'),false);assert.deepEqual(errors,[]);
  console.log('PASS desktop/narrow layout, page identity, console health and original assets');
  const uniqueConsole=[...new Set(consoleErrors)],expectedSandbox=uniqueConsole.filter(message=>message==="Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set."),unexpected=uniqueConsole.filter(message=>!expectedSandbox.includes(message));
  assert.equal(await page.evaluate(()=>['article-frame','matrix-source-frame','matrix-format-frame','component-preview'].every(id=>!document.getElementById(id).contentDocument?.querySelector('script'))),true);

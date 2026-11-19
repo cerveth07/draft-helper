@@ -1,6 +1,6 @@
 {
   "name": "syncpress",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Cross-platform rich-text layout and user-controlled draft distribution",
   "scripts": {
@@ -31,5 +31,5 @@
     "multiplatform",
     "offline"
   ],
-  "displayVersion": "v1.0"
+  "displayVersion": "v1.0.1"
 }

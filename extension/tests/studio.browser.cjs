@@ -30,7 +30,28 @@ const server=http.createServer((req,res)=>{
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/studio.html`);
     await page.evaluate(()=>DraftStudio.ready);
+    assert.equal(await page.locator('#paste-open').isVisible(),false);
+    assert.equal(await page.locator('#retry-cover').isVisible(),false);
+    assert.equal(await page.locator('#verify-result').isVisible(),false);
+    assert.equal(await page.locator('#review-target').isVisible(),false);
+    assert.equal(await page.locator('#local-import #matrix-bundle').count(),1);
+    await page.click('#local-import > summary');assert.equal(await page.locator('#paste-open').isVisible(),true);
+    await page.click('#local-import > summary');
     await page.click('#sample');await page.waitForFunction(()=>DraftStudio.snapshot().html.includes('把注意力'));
+    for(const [selector,label,description] of [
+      ['#undo','撤销','每点一次回退一步'],['#redo','重做','重新应用刚撤销的修改'],
+      ['#restore-menu > summary','恢复','恢复整篇导入时的稿件'],['#export-menu > summary','导出','展开下载菜单'],
+    ]){
+      const control=page.locator(selector);
+      const tip=page.locator('#'+await control.getAttribute('aria-describedby'));
+      assert.equal((await control.textContent()).trim(),label);
+      assert.equal(await tip.isVisible(),false);
+      await control.hover();
+      assert.equal(await tip.isVisible(),true);
+      assert.ok((await tip.innerText()).includes(description));
+      await page.mouse.move(0,0);
+      assert.equal(await tip.isVisible(),false);
+    }
     await page.click('#mode-adjust');
     await page.fill('#global-fontSize','18');await page.locator('#global-fontSize').blur();
     await page.fill('#global-lineHeight','2');await page.locator('#global-lineHeight').blur();
@@ -55,6 +76,8 @@ const server=http.createServer((req,res)=>{
     // The actual adapter verifies and fills a text-only article into an isolated editor fixture.
     await page.click('#send');await page.click('#review-fill');await page.waitForFunction(()=>document.querySelector('#result-status').textContent.includes('正文文字与图片顺序已核对'));
     assert.match(await editor.locator('#body').innerText(),/把注意力/);
+    assert.equal(await page.locator('#retry-cover').isVisible(),false,'no retry without a cover error');
+    assert.equal(await page.locator('#verify-result').isVisible(),true);
     await page.click('#verify-result');await page.waitForFunction(()=>document.querySelector('#result-status').textContent.includes('核对通过'));
     await editor.evaluate(()=>document.querySelector('#body p').remove());
     await page.click('#verify-result');await page.waitForFunction(()=>document.querySelector('#result-status').textContent.includes('正文文字与准备稿不一致'));
@@ -80,7 +103,16 @@ const server=http.createServer((req,res)=>{
     await page.evaluate(()=>{uploadImageToWechat=async()=> 'https://mmbiz.qpic.cn/test/image/0';setCoverFromFile=async()=>{throw Error('测试封面裁剪未完成');};});
     await page.click('#send');await page.click('#review-fill');await page.waitForFunction(()=>document.querySelector('#result-status').textContent.includes('正文文字与图片顺序已核对'));
     assert.match(await page.locator('#result-status').innerText(),/封面未完成/);
+    assert.equal(await page.locator('#retry-cover').isVisible(),true);
+    assert.equal(await page.locator('#verify-result').isVisible(),true);
+    const beforeRetry=await editor.locator('#body').innerHTML();
+    await page.evaluate(()=>{setCoverFromFile=async()=>({matchKind:'测试封面'});});
+    await page.click('#retry-cover');
+    await page.waitForFunction(()=>document.querySelector('#result-status').textContent.includes('封面已设置'));
+    assert.equal(await page.locator('#retry-cover').isVisible(),false);
+    assert.equal(await editor.locator('#body').innerHTML(),beforeRetry);
     assert.equal(await editor.locator('#body img').count(),1);
+    await page.click('#restore-menu > summary');
     await page.click('#restore');await page.waitForFunction(()=>!DraftStudio.snapshot().html.includes('data:image/png'));
     await page.click('#undo');await page.waitForFunction(()=>DraftStudio.snapshot().html.includes('data:image/png'));
     console.log('PASS sanitize, CSS preservation, missing-image block, replace/caption/cover, verified bundle, cover failure keeps body success, restore undo');
@@ -118,16 +150,17 @@ const server=http.createServer((req,res)=>{
     });
     await page.evaluate(()=>{
       chrome.permissions.contains=async({origins})=>origins.some(s=>s.includes('mmbiz.qpic.cn'));
-      WechatCapture.readTab=async()=>({
+      chrome.scripting={executeScript:async({target})=>[target.tabId===7?{result:{
         title:'多平台图片自动获取测试稿',author:'图片作者',sourceTabId:7,
         html:'<div id="js_content"><section style="background-image:url(&quot;https://mmbiz.qpic.cn/draft-helper-test/640&quot;)">'
           +'<p>背景与正文应同时保留</p></section><p>图片甲</p>'
           +'<img src="https://mmbiz.qpic.cn/draft-helper-test/640">'
           +'<p>图片乙</p><img src="https://mmbiz.qpic.cn/draft-helper-test/640"></div>'
-      });
+      }}:{}]};
     });
-    await page.selectOption('#source-tab','7');
-    await page.click('#import-wechat-tab');
+    for(const id of ['source-tab','refresh-source-tabs','import-wechat-tab'])assert.equal(await page.locator('#'+id).count(),0);
+    await page.fill('#wechat-source-url','https://mp.weixin.qq.com/cgi-bin/appmsg');
+    await page.click('#import-wechat-url');
     await page.waitForFunction(()=>document.querySelector('#image-download-status').textContent.includes('本轮完成'));
     const localized=await page.evaluate(async()=>{
       const state=DraftStudio.snapshot(),check=DraftCore.preflight(state);
@@ -148,7 +181,16 @@ const server=http.createServer((req,res)=>{
     assert.equal(localized.targetImages,3,'background and repeated images remain positioned');
     assert.equal(localized.backgrounds,1);
     assert.deepEqual(localized.errors,[]);
-    console.log('PASS automatic remote media retrieval, deduplication, CSS background fallback, verified target bundle');
+    assert.equal(await page.locator('#undo').isDisabled(),true,'automatic image localization is part of import');
+    const capturedTitle=await page.locator('#article-title').inputValue();
+    await page.fill('#article-title','编辑后的验收标题');await page.locator('#article-title').blur();
+    await page.click('#undo');assert.equal(await page.locator('#article-title').inputValue(),capturedTitle);
+    await page.click('#redo');assert.equal(await page.locator('#article-title').inputValue(),'编辑后的验收标题');
+    await page.click('#restore-menu > summary');await page.click('#restore');
+    assert.equal(await page.locator('#article-title').inputValue(),capturedTitle);
+    assert.equal(await page.evaluate(()=>DraftCore.preflight(DraftStudio.snapshot()).images.filter(item=>/^https?:/.test(item.src)).length),0);
+    assert.equal(imageRequests,1,'restore reuses the bytes downloaded at import');
+    console.log('PASS automatic remote media retrieval, deduplication, CSS background fallback, verified target bundle, undo/redo, restore keeps image bytes');
 
     assert.deepEqual(errors,[]);
     await page.screenshot({path:path.join(out,'studio-images.png'),fullPage:true});

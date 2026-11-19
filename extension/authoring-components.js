@@ -4,18 +4,62 @@ const DraftComponents=(()=>{
   const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const para=text=>String(text??'').split(/\n+/).filter(Boolean).map(line=>'<p style="margin:0 0 12px;line-height:1.8">'+escape(line)+'</p>').join('');
   const field=(key,label,value='',multiline=false)=>({key,label,value,multiline});
-  const photo=(src,caption)=>'<figure style="margin:16px 0"><img src="'+escape(src)+'" alt="'+escape(caption)+'" style="display:block;width:100%;height:auto"><figcaption style="font-size:13px;color:#666;text-align:center;margin-top:8px">'+escape(caption)+'</figcaption></figure>';
+  const photo=(src,caption='')=>'<figure style="margin:16px 0"><img src="'+escape(src)+'" alt="'+escape(caption)+'" style="display:block;width:100%;height:auto">'
+    +(caption.trim()?'<figcaption style="font-size:13px;color:#666;text-align:center;margin-top:8px">'+escape(caption)+'</figcaption>':'')+'</figure>';
   const presets=[
-    {id:'section-title',name:'分节标题',category:'标题',description:'带序号的分节标题，正文仍可编辑。',fields:[field('number','序号','01'),field('title','标题','填写分节标题')],build:v=>'<h2 style="font-size:21px;color:#087fb5;margin:26px 0 16px">'+escape(v.number)+' · '+escape(v.title)+'</h2>'},
-    {id:'guest-intro',name:'嘉宾简介',category:'论坛',description:'姓名、称谓、职务与分享主题。',fields:[field('name','姓名与称谓','填写姓名及称谓'),field('role','职务','填写单位与职务'),field('topic','分享介绍','填写论坛名称和分享主题',true)],build:v=>'<section style="border-left:3px solid #087fb5;padding:4px 0 4px 16px;margin:20px 0"><p style="font-size:20px;color:#087fb5;font-weight:700;margin:0 0 8px">'+escape(v.name)+'</p><p style="color:#666;font-size:14px;margin:0 0 12px">'+escape(v.role)+'</p>'+para(v.topic)+'</section>'},
-    {id:'quotation',name:'重点引语',category:'论坛',description:'可编辑的引语与署名。',fields:[field('quote','引语','填写需要突出展示的原文引语',true),field('author','署名','填写发言人姓名及称谓')],build:v=>'<blockquote style="border-left:3px solid #087fb5;padding:12px 16px;margin:20px 0;background:#f2f7fa">'+para(v.quote)+'<p style="text-align:right;font-size:13px;color:#666;margin:8px 0 0">——'+escape(v.author)+'</p></blockquote>'},
-    {id:'data-finding',name:'数据结论',category:'报告',description:'数据、指标含义、统计范围与来源成组展示。',fields:[field('value','数据','填写数据'),field('label','指标说明','填写指标名称及统计口径'),field('finding','解读','填写已经核实的结论',true),field('source','来源与日期','填写来源及数据日期')],build:v=>'<section style="padding:18px;border:1px solid #d9e7ed;margin:20px 0"><p style="font-size:28px;font-weight:700;color:#087fb5;margin:0 0 8px">'+escape(v.value)+'</p><p style="font-weight:700;margin:0 0 10px">'+escape(v.label)+'</p>'+para(v.finding)+'<p style="font-size:12px;color:#666;margin:12px 0 0">'+escape(v.source)+'</p></section>'},
-    {id:'index-note',name:'指标说明',category:'报告',description:'用于放置完整指标定义或统计说明。',fields:[field('title','说明标题','统计说明'),field('body','完整说明','填写经过确认的指标定义与统计范围',true)],build:v=>'<section style="margin:22px 0;padding:14px 0;border-top:1px solid #dce5e2"><h3 style="font-size:16px;color:#555;margin:0 0 10px">'+escape(v.title)+'</h3><div style="font-size:13px;color:#666">'+para(v.body)+'</div></section>'},
-    {id:'single-photo',name:'现场照片与图注',category:'图片',description:'插入原始图片和可编辑图注。',images:1,fields:[field('caption','图片说明','填写现场照片说明')],build:(v,images)=>photo(images[0],v.caption)},
-    {id:'double-photo',name:'双图组合',category:'图片',description:'两张原图并排；分发时按平台兼容策略处理。',images:2,fields:[field('caption1','左图说明','填写左图说明'),field('caption2','右图说明','填写右图说明')],build:(v,images)=>'<section style="display:flex;gap:12px;align-items:flex-start;margin:20px 0"><div style="width:48%;flex:1">'+photo(images[0],v.caption1)+'</div><div style="width:48%;flex:1">'+photo(images[1],v.caption2)+'</div></section>'},
-    {id:'divider',name:'章节分隔线',category:'通用',description:'简单分隔，不添加装饰小图。',fields:[],build:()=>'<hr style="border:0;border-top:1px solid #dce5e2;margin:26px 0">'},
-    {id:'signature',name:'机构落款',category:'通用',description:'机构名称和补充说明，可继续编辑。',fields:[field('name','机构名称','填写机构名称'),field('note','补充说明','填写需要保留的来源或联系说明',true)],build:v=>'<section style="border-top:2px solid #087fb5;padding:16px 0;margin:28px 0 0"><p style="font-size:18px;color:#087fb5;font-weight:700;margin:0 0 10px">'+escape(v.name)+'</p>'+para(v.note)+'</section>'},
-    {id:'reading-link',name:'推荐阅读',category:'通用',description:'保留完整网页地址和可编辑链接文字。',fields:[field('label','文章标题','填写推荐文章标题'),field('url','文章链接','https://')],build:v=>{if(!/^https?:\/\/[^\s]+$/i.test(v.url))throw Error('请输入完整的 http 或 https 文章链接。');return '<section style="margin:24px 0"><h3 style="font-size:16px;color:#087fb5">推荐阅读</h3><p><a href="'+escape(v.url)+'">'+escape(v.label)+'</a></p></section>';}}
+    {
+      id:'section-title',name:'小标题',category:'版式',description:'用于划分正文小节。',
+      fields:[field('title','标题','小节标题')],
+      build:v=>'<h2 style="font-size:21px;color:#087fb5;margin:26px 0 16px">'+escape(v.title)+'</h2>'
+    },
+    {
+      id:'callout',name:'重点提示',category:'文字',description:'高亮一段提醒、说明或结论。',
+      fields:[field('title','标题（可选）'),field('body','内容','填写要提醒读者的内容。',true)],
+      build:v=>'<section style="border-left:3px solid #087fb5;padding:12px 16px;margin:20px 0;background:#f2f7fa">'
+        +(v.title?.trim()?'<p style="font-weight:700;color:#087fb5;margin:0 0 8px">'+escape(v.title)+'</p>':'')+para(v.body)+'</section>'
+    },
+    {
+      id:'quotation',name:'引用',category:'文字',description:'突出引文，可补充作者或出处。',
+      fields:[field('quote','引文','填写引文。',true),field('author','作者或出处（可选）')],
+      build:v=>'<blockquote style="border-left:3px solid #a6b5bc;padding:8px 16px;margin:20px 0;color:#555">'+para(v.quote)
+        +(v.author?.trim()?'<p style="text-align:right;font-size:13px;margin:8px 0 0">——'+escape(v.author)+'</p>':'')+'</blockquote>'
+    },
+    {
+      id:'key-points',name:'要点列表',category:'文字',description:'每行一项，适合步骤、清单或要点。',
+      fields:[field('items','要点','第一条要点\n第二条要点',true)],
+      build:v=>'<ul style="padding-left:1.5em;margin:16px 0">'
+        +(v.items||'').split('\n').map(item=>item.trim()).filter(Boolean).map(item=>'<li style="margin:6px 0">'+escape(item)+'</li>').join('')+'</ul>'
+    },
+    {
+      id:'single-photo',name:'图片与图注',category:'图片',description:'插入一张原图，可添加说明。',images:1,
+      fields:[field('caption','图注（可选）')],
+      build:(v,images)=>photo(images[0],v.caption)
+    },
+    {
+      id:'double-photo',name:'双图组合',category:'图片',description:'并排放置两张图片。',images:2,
+      fields:[field('caption1','左图图注（可选）'),field('caption2','右图图注（可选）')],
+      build:(v,images)=>'<section style="display:flex;gap:12px;align-items:flex-start;margin:20px 0">'
+        +'<div style="width:48%;flex:1">'+photo(images[0],v.caption1)+'</div><div style="width:48%;flex:1">'+photo(images[1],v.caption2)+'</div></section>'
+    },
+    {
+      id:'divider',name:'分隔线',category:'版式',description:'分开相邻的小节。',fields:[],
+      build:()=>'<hr style="border:0;border-top:1px solid #dce5e2;margin:26px 0">'
+    },
+    {
+      id:'signature',name:'文末署名',category:'版式',description:'适用于个人、团队或机构署名。',
+      fields:[field('name','署名','作者姓名'),field('note','补充说明（可选）','',true)],
+      build:v=>'<section style="border-top:1px solid #dce5e2;padding:12px 0;margin:24px 0 0">'
+        +'<p style="font-size:15px;font-weight:700;margin:0 0 8px">'+escape(v.name)+'</p>'+para(v.note)+'</section>'
+    },
+    {
+      id:'reading-link',name:'链接',category:'文字',description:'添加参考资料、延伸阅读或相关页面。',
+      fields:[field('label','链接文字','查看详情'),field('url','链接地址','https://')],
+      build:v=>{
+        const url=(v.url||'').trim();
+        if(!/^https?:\/\/[^\s]+$/i.test(url))throw Error('请输入完整的 http 或 https 链接。');
+        return '<p style="margin:16px 0"><a href="'+escape(url)+'">'+escape(v.label)+'</a></p>';
+      }
+    }
   ];
   function build(id,values,images=[]){const item=presets.find(item=>item.id===id);if(!item)throw Error('组件不存在。');
     if(images.length<(item.images||0))throw Error('请为此组件选择 '+item.images+' 张本地图片。');

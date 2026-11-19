@@ -31,8 +31,8 @@ function allFiles(dir,prefix=''){
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const browser=await chromium.launch({headless:true,...(process.env.DRAFT_HELPER_CHROMIUM_PATH?{executablePath:process.env.DRAFT_HELPER_CHROMIUM_PATH}:{})});
   try{
-    const page=await browser.newPage(),errors=[],dialogs=[];
-    page.on('pageerror',error=>errors.push(error.message));page.on('dialog',async dialog=>{dialogs.push(dialog.message());await dialog.accept();});
+    const page=await browser.newPage(),errors=[];
+    page.on('pageerror',error=>errors.push(error.message));page.on('dialog',dialog=>dialog.accept());
     await page.addInitScript(()=>{
       const tabs=[{id:11,url:'https://mp.sohu.com/mpfe/v4/contentManagement/news/addarticle',title:'搜狐测试页'},
         {id:12,url:'https://mp.toutiao.com/profile_v4/graphic/publish',title:'头条测试页'},
@@ -54,7 +54,8 @@ function allFiles(dir,prefix=''){
     const sohu=path.join(base,'04-搜狐号');await page.locator('#matrix-bundle').setInputFiles(sohu);
     await page.waitForFunction(()=>document.querySelector('#matrix-bundle-status').textContent.includes('已选择：搜狐号准备包'));
     assert.equal(await page.locator('#matrix-fill').isEnabled(),true,'an existing package must work without an open WeChat draft');
-    await page.locator('#matrix-fill').click();await page.waitForFunction(()=>document.querySelector('#matrix-status').textContent.includes('已填入'));
+    await page.locator('#matrix-fill').click();await page.locator('#review-fill').click();await page.waitForFunction(()=>document.querySelector('#matrix-status').textContent.includes('已填入'));
+    await page.locator('#export-menu > summary').click();
     const pending=page.waitForEvent('download');await page.locator('#matrix-export').click();const download=await pending;
     const zipped=archiveEntries(fs.readFileSync(await download.path())),original=allFiles(sohu);
     assert.deepEqual([...zipped.keys()].sort(),[...original.keys()].sort());
@@ -65,13 +66,15 @@ function allFiles(dir,prefix=''){
     const proof=JSON.parse(fs.readFileSync(path.join(yidian,'source-wechat.json'),'utf8'));
     const expected=require('../yidian-contract.js').deriveToutiaoTitle(proof.manifest.title);
     assert.equal(await page.inputValue('#matrix-title'),expected);
-    await page.locator('#matrix-fill').click();await page.waitForFunction(()=>document.querySelector('#matrix-status').textContent.includes('已填入'));
+    await page.locator('#matrix-fill').click();
+    assert.ok((await page.locator('#review-content').textContent()).includes(expected));
+    await page.locator('#review-fill').click();await page.waitForFunction(()=>document.querySelector('#matrix-status').textContent.includes('已填入'));
     await page.selectOption('#matrix-platform','yidian');
     const title=JSON.parse(fs.readFileSync(path.join(yidian,'manifest.json'),'utf8')).title;
     await page.waitForFunction(title=>document.querySelector('#matrix-title').value===title,title);
     await page.selectOption('#matrix-platform','toutiao');await page.waitForFunction(title=>document.querySelector('#matrix-title').value===title,expected);
     const fills=await page.evaluate(()=>fills);assert.deepEqual(fills.map(item=>item.platform),['sohu','toutiao']);
-    assert.equal(fills[1].title,expected);assert.ok(dialogs.at(-1).includes(expected));assert.deepEqual(errors,[]);
+    assert.equal(fills[1].title,expected);assert.deepEqual(errors,[]);
     console.log('PASS: real legacy packages load without a current article; original ZIP retained; shared Toutiao title and dispatch verified in isolated browser');
   }finally{await browser.close();server.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

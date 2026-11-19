@@ -1046,8 +1046,10 @@ async function run() {
       if (!insertedHtml.includes(url.split('?')[0])) throw new Error('编辑器正文中未找到已上传图片，稿件未保存。');
     }
     const readback = typeof DraftCore !== 'undefined' ? DraftCore.compare(content, insertedHtml) : null;
-    if (globalThis.DraftStudio) DraftStudio.recordFill({tabId:tab.id,html:content,title:manifest.title,summary:manifest.summary.trim()});
     if (readback && !readback.ok) throw new Error('正文已写入，但回读发现差异：' + readback.issues.join('；') + '。请保留页面检查，不要重复填入。');
+    globalThis.DraftStudio?.recordFill({
+      tab:{id:tab.id,url:tab.url},html:content,title:manifest.title,summary:manifest.summary.trim(),coverFailed:Boolean(coverWarning),
+    });
     stage = '完成';
     status(`标题、${[...manifest.summary].length}字摘要和正文已填入；${uploadedUrls.length} 张正文图片完成上传`
       + (coverProof ? `，封面预览已变化（${coverProof.matchKind}）` : coverWarning ? '；' + coverWarning : '；未选择封面，可在微信中补充')

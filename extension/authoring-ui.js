@@ -113,6 +113,8 @@ const DraftAuthorUI=(()=>{
       }
       if(!list.children.length){const empty=window.document.createElement('p');empty.className='hint';empty.textContent=host.current().html?'没有匹配的内容。':'导入文章后显示章节、段落和图片。';list.append(empty);}
       q('author-selection-count').textContent=selection.length?'已选 '+selection.length+' 项':'未选择内容';
+      const active = A.find(document, host.activeId());
+      window.document.querySelector('[data-author-action="edit"]').hidden = !editable() || !active?.matches(A.textBlocks);
     }
     function refresh(){
       refreshOutline();const enabled=editable(),has=currentIds().length>0;
@@ -149,11 +151,16 @@ const DraftAuthorUI=(()=>{
     }
     async function loadComponents(){const saved=await componentStore();if(!saved)return;custom=Array.isArray(saved)?saved.map(K.validate):[];}
     function renderLibrary(){
+      q('component-export').hidden = !custom.length;
       const search=q('component-search').value.trim().toLowerCase(),category=q('component-category').value,list=q('component-list');list.replaceChildren();
       const items=[...K.presets,...custom].filter(item=>(!category||item.category===category)&&(!search||(item.name+' '+item.description).toLowerCase().includes(search)));
       for(const item of items){const card=document.createElement('article');card.className='component-card';const name=document.createElement('strong'),note=document.createElement('p'),button=document.createElement('button');
-        name.textContent=item.name;note.textContent=item.description;note.className='hint';button.textContent=item.html?'预览并插入':'填写并插入';button.onclick=safe(()=>openComponent(item));card.append(name,note,button);
-        if(item.html){const remove=document.createElement('button');remove.className='text-button';remove.textContent='删除收藏';remove.onclick=safe(async()=>{if(!confirm('删除组件收藏“'+item.name+'”？文章中的内容会保留。'))return;custom=custom.filter(x=>x.id!==item.id);await componentStore(custom);renderLibrary();});card.append(remove);}list.append(card);
+        name.textContent=item.name;note.textContent=item.description;note.className='hint';button.textContent=item.fields?.length||item.images?'填写并插入':'预览并插入';button.onclick=safe(()=>openComponent(item));card.append(name,note,button);
+        if(item.html){const remove=document.createElement('button');remove.className='text-button';remove.textContent='删除收藏';remove.onclick=safe(async()=>{if(!confirm('删除组件收藏“'+item.name+'”？文章中的内容会保留。'))return;custom=custom.filter(x=>x.id!==item.id);await componentStore(custom);renderLibrary();});const actions = document.createElement('details');
+          const label = document.createElement('summary');
+          label.textContent = '管理收藏';
+          actions.append(label, remove);
+          card.append(actions);}list.append(card);
       }
       if(!items.length){const note=document.createElement('p');note.className='hint';note.textContent='暂无匹配组件。可以从当前稿选择图文组合后收藏。';list.append(note);}
     }

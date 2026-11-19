@@ -6,7 +6,7 @@
   let original=null, undoStack=[], redoStack=[], selected=null, showingOriginal=false, frameSerial=0, busy=false;
   let lastFill=null, fillBundle=null, templateList=[], autosaveTimer=null, toastTimer=null, lastObserved=null;
   let pendingAsset=null, sourceImageTabId=null, authoring=null;
-  let distributionMode=false, distributionTab=null, distributionBundle=null;
+  let distributionMode=false, activeFillTarget=null, distributionBundle=null;
   const distributionTitles=new Map();
   const distributionSummaries=new Map();
   let layoutCache=null;
@@ -45,7 +45,7 @@
   let readyResolve; const ready=new Promise(resolve=>{readyResolve=resolve;});
   const toast=(message,tone)=>{q('toast').textContent=message;q('toast').dataset.tone=tone||'info';q('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>q('toast').hidden=true,5500);};
   const handle=fn=>async event=>{try{await ready;await fn(event);}catch(error){toast(error.message||String(error),'error');}};
-  const setBusy=value=>{busy=value;document.body.classList.toggle('busy',value);for(const el of document.querySelectorAll('.top-actions button,.dialog-actions button,#distribution-panel button,#export-wechat-package'))el.disabled=value; if(!value) refreshControls();};
+  const setBusy=value=>{busy=value;document.body.classList.toggle('busy',value);for(const el of document.querySelectorAll('.top-actions button,.dialog-actions button,#distribution-panel button,#export-wechat-package,#import-wechat-url,#matrix-bundle-open'))el.disabled=value; if(!value) refreshControls();};
 
   function database() {
     return new Promise((resolve,reject)=>{
@@ -70,31 +70,43 @@
     let size=0;undoStack=undoStack.reverse().filter((item,i)=>{size+=item.html.length+(item.cover?.length||0);return i<40&&(size<24*1024*1024||i===0);}).reverse();
   }
   function mutate(fn) {
-    if(busy)return;authoring?.stopEditing();checkpoint();fn(state);showingOriginal=false;lastFill=null;layoutCache=null;render();saveSoon();
+    if(busy)return;authoring?.stopEditing();checkpoint();fn(state);showingOriginal=false;layoutCache=null;render();saveSoon();
   }
   function refreshControls() {
     q('undo').disabled=busy||!undoStack.length;q('redo').disabled=busy||!redoStack.length;
     q('restore').disabled=busy||!original;q('export-html').disabled=busy||!state.html;q('send').disabled=busy||!state.html;
     q('style-controls').disabled=busy||state.mode!=='adjust'||showingOriginal;
-    q('mode-preserve').setAttribute('aria-pressed',String(state.mode==='preserve'));
+    const hasArticle = Boolean(state.html);
+    q('restore-menu').hidden = !original;
+    q('mode-preserve').hidden = state.mode !== 'adjust';
+    q('mode-preserve').disabled = busy || !original;
+    q('mode-adjust').hidden = !hasArticle;
+    q('mode-adjust').disabled = busy || state.mode === 'adjust';
+    q('view-original').hidden = !original;
+    q('export-menu').hidden = !hasArticle && !distributionBundle;
+    q('export-html').hidden = q('export-wechat-package').hidden = !hasArticle;
+    q('matrix-export').textContent = '导出' + DraftDistribution.PLATFORMS[q('matrix-platform').value].label + '准备包 ZIP';
     q('mode-adjust').setAttribute('aria-pressed',String(state.mode==='adjust'));
     document.body.dataset.mode=state.mode;document.body.dataset.viewing=showingOriginal?'original':'current';document.body.dataset.document=state.html?'loaded':'empty';
-    q('preserve-notice').hidden=state.mode==='adjust';
+    q('style-controls').hidden = !hasArticle || state.mode !== 'adjust' || showingOriginal;
+    q('mode-hint').hidden = !hasArticle;
     q('mode-hint').textContent=showingOriginal?'正在查看导入原稿 · 再次点击按钮返回当前稿':state.mode==='preserve'?'保留原稿样式。切换到“自由调整”后，可选择内容块。':'点击正文选择内容块 · 整篇设置与局部样式均可撤销';
     q('view-original').textContent=showingOriginal?'返回当前稿':'查看导入原稿';
     for(const key of ['fontSize','lineHeight','paragraphGap','padding'])q('global-'+key).value=state.settings[key]??'';
     q('global-theme').value=state.settings.theme||'#4f46e5';
     q('summary-count').textContent=[...state.meta.summary].length+' / 120 字';
+    q('cover-clear').hidden = !state.cover;
     q('cover-preview').hidden=!state.cover;if(state.cover)q('cover-preview').src=state.cover;
+    q('retry-cover').hidden=!lastFill?.coverFailed;
     q('retry-cover').disabled=busy||!state.cover;
+    q('verify-result').hidden=!lastFill;
     q('verify-result').disabled=busy||!lastFill;
     q('export-wechat-package').disabled=busy||!state.html;
     q('matrix-export').disabled=busy||(!state.html&&!distributionBundle);
     q('matrix-fill').disabled=busy||(!state.html&&!distributionBundle);
     q('matrix-fill').textContent='检查并填入所选平台';
-    q('matrix-target').disabled=busy;
-    q('matrix-refresh-targets').disabled=busy;
     q('matrix-bundle-clear').disabled=busy||!distributionBundle;
+    q('matrix-bundle-clear').hidden = q('matrix-bundle-status').hidden = !distributionBundle;
     q('matrix-layout-check').disabled=busy||(distributionBundle?!distributionBundle.manifest.matrixFormat:!state.html);
     q('matrix-format-check').disabled=busy||(!state.html&&!distributionBundle);
     q('matrix-layout').disabled=busy||!!distributionBundle;
@@ -235,7 +247,7 @@
         const label=(typeof DraftDistribution!=='undefined'&&DraftDistribution.PLATFORMS?.[target]?.label)||null;
         if(!label)
           throw Error('无法识别的准备包目标平台：'+target+'。请确认 manifest.json 的 targetPlatform。');
-        throw Error('这是'+label+'准备包。要填入该平台，请在右侧「多平台分发」→「选择已有准备包」中选用；左侧只载入微信包用于排版。');
+        throw Error('这是'+label+'准备包。请在「本地导入」里点「载入平台包」。');
       }
       await verifyBundle(old,'wechat');
       let html=old.html;
@@ -246,7 +258,7 @@
       toast('已载入'+(old.manifest.profileSpec?.label||old.manifest.profile?.id||'微信')+'准备包');
       return;
     }
-    if(options.expectBundle)throw Error('所选文件夹不是准备包：缺少 manifest.json。普通稿件请用「文章文件夹」。');
+    if(options.expectBundle)throw Error('所选文件夹不是准备包：缺少 manifest.json。普通稿件请从稿件栏导入文件夹。');
     let documents=files.filter(file=>/\.(html?|md|markdown|txt)$/i.test(file.name));
     if(documents.length>1){const depth=file=>(file.webkitRelativePath||file.name).split('/').length;const minDepth=Math.min(...documents.map(depth));documents=documents.filter(file=>depth(file)===minDepth);}
     if(documents.length!==1)throw Error('请选择一篇文章及其图片；文件夹中应只有一个 HTML、Markdown 或 TXT 正文文件。');
@@ -266,42 +278,127 @@
   }
   function updateTemplates() {
     const select=q('template-list'),previous=select.value;select.replaceChildren(new Option(templateList.length?'选择已保存的样式':'尚无自定义模板',''));
-    templateList.forEach((item,i)=>select.add(new Option(item.name,String(i))));select.value=previous;
+    templateList.forEach((item,i)=>select.add(new Option(item.name,String(i))));select.value=previous;refreshTemplateActions();
     localStorage.setItem('draft-helper-templates-v1',JSON.stringify(templateList));
   }
+  function refreshTemplateActions() {
+    const selected = q('template-list').value !== '';
+    for (const id of ['template-apply','template-export','template-delete']) q(id).hidden = !selected;
+  }
+  q('template-list').onchange = refreshTemplateActions;
   function currentTemplate() {const value=q('template-list').value;if(value==='')throw Error('请先选择一个自定义样式。');return templateList[Number(value)];}
 
-  async function refreshTargets() {
-    const prior=q('target-tab').value||new URL(location.href).searchParams.get('target');
-    const tabs=await chrome.tabs.query({url:'https://mp.weixin.qq.com/*'}),select=q('target-tab');
-    const sourceSelect=q('source-tab'),sourcePrior=sourceSelect.value;sourceSelect.replaceChildren(new Option('选择来源文章／预览／草稿页',''));
-    for(const tab of tabs)sourceSelect.add(new Option(tab.title||'微信公众号 · '+tab.id,String(tab.id)));
-    sourceSelect.value=sourcePrior;
-    select.replaceChildren(new Option('请选择已登录的空白图文编辑页',''));
-    for(const tab of tabs)select.add(new Option(tab.title||'微信公众号 · '+tab.id,String(tab.id)));
-    if(tabs.some(tab=>String(tab.id)===prior))select.value=prior;
-    else if(tabs.length===1)select.value=String(tabs[0].id);
+  const reviewDialog=q('review-dialog'), reviewTarget=q('review-target');
+  let pendingReview=null, reviewScan=0, reviewTimer;
+
+  function matchesFillTarget(tab,platform) {
+    try {
+      const url=new URL(tab.url);
+      if(identifyDraftPlatform(url.href)!==platform)return false;
+      const path=url.pathname.replace(/\/$/,'');
+      if(platform==='wechat')return path==='/cgi-bin/appmsg';
+      if(platform==='toutiao')return path==='/profile_v4/graphic/publish';
+      return true;
+    }catch{return false;}
   }
+
+  async function checkedFillTarget(target,platform) {
+    const tab=await chrome.tabs.get(target.id).catch(()=>null);
+    if(!tab||tab.url!==target.url||!matchesFillTarget(tab,platform))
+      throw Error('目标编辑页已关闭或跳转，请重新点击「填入」选择。');
+    return tab;
+  }
+
   async function targetTab() {
-    if (distributionMode) {
-      if (!distributionTab) throw Error('未指定多平台填入的目标标签页。');
-      const current=await chrome.tabs.get(distributionTab.id);
-      const platform=q('matrix-platform').value;
-      if (!current.url || identifyDraftPlatform(current.url)!==platform
-          || Number(q('matrix-target').value)!==distributionTab.id)
-        throw Error('目标平台页面已变化，请刷新选择后重新确认。');
-      return current;
-    }
-    const id=Number(q('target-tab').value);if(!id)throw Error('请先选择微信编辑页。');
-    const tab=await chrome.tabs.get(id);
-    if(!tab.url?.startsWith('https://mp.weixin.qq.com/'))throw Error('所选标签页已离开微信，请重新选择。');return tab;
+    if(!activeFillTarget)throw Error('请先点击「填入」并选择目标编辑页。');
+    return checkedFillTarget(activeFillTarget.tab,activeFillTarget.platform);
   }
-  async function performFill(coverOnly=false) {
-    if (coverOnly && lastFill && (await targetTab()).id !== lastFill.tabId) throw Error('重试封面时请选择刚才填入的微信标签页。');
-    fillBundle=await C.bundle(state);setBusy(true);
-    try {if(coverOnly)await runMatrixCoverOnly();else await run();}
+
+  function updateReviewConfirm() {
+    q('review-fill').disabled=!pendingReview||pendingReview.errors.length>0
+      ||!pendingReview.targets.has(reviewTarget.value);
+  }
+
+  async function refreshReviewTargets() {
+    const review=pendingReview;
+    if(!review||!reviewDialog.open)return;
+    const scan=++reviewScan;
+    let candidates=[],failed=false;
+    try {
+      const pattern=review.platform==='wechat'?'https://mp.weixin.qq.com/*':distributionPatterns[review.platform];
+      const tabs=await chrome.tabs.query({url:pattern});
+      candidates=tabs.filter(tab=>tab.id&&matchesFillTarget(tab,review.platform));
+    }catch{failed=true;}
+    if(scan!==reviewScan||review!==pendingReview||!reviewDialog.open)return;
+    const previous=review.targets.get(reviewTarget.value);
+    review.targets=new Map(candidates.map(tab=>[String(tab.id),tab]));
+    reviewTarget.replaceChildren(new Option('选择已登录的空白编辑页',''));
+    for(const tab of candidates)reviewTarget.add(new Option(tab.title||review.platformLabel+' · '+tab.id,String(tab.id)));
+    if(previous&&review.targets.get(String(previous.id))?.url===previous.url)reviewTarget.value=String(previous.id);
+    else if(!review.scanned){
+      const preferred=review.platform==='wechat'?new URL(location.href).searchParams.get('target'):null;
+      if(review.targets.has(preferred))reviewTarget.value=preferred;
+      else if(candidates.length===1)reviewTarget.value=String(candidates[0].id);
+    }
+    review.scanned=true;
+    reviewTarget.disabled=!candidates.length;
+    q('review-target-status').textContent=failed?'读取标签页失败，切回工作台时会重新扫描。'
+      :candidates.length?'填入后在目标编辑页核对排版并保存。':'请打开已登录的空白编辑页，列表会自动更新。';
+    updateReviewConfirm();
+  }
+
+  function scheduleReviewScan() {
+    if(!reviewDialog.open)return;
+    clearTimeout(reviewTimer);
+    reviewTimer=setTimeout(refreshReviewTargets,80);
+  }
+
+  async function openFillReview(platform,title,detail,{errors=[],warnings=[],bundle=null}={}) {
+    const platformLabel=platform==='wechat'?'微信':DraftDistribution.PLATFORMS[platform].label;
+    pendingReview={platform,platformLabel,errors,bundle,targets:new Map(),scanned:false};
+    q('review-title').textContent='检查并填入'+platformLabel;
+    const content=q('review-content'),line=document.createElement('p');
+    line.textContent=title+' · '+detail;
+    content.replaceChildren(line);
+    for(const [type,messages] of [['error',errors],['warning',warnings]])for(const message of messages){
+      const note=document.createElement('p');note.className=type;note.textContent=String(message);content.append(note);
+    }
+    reviewTarget.replaceChildren(new Option('正在扫描标签页…',''));
+    reviewTarget.disabled=true;updateReviewConfirm();
+    q('review-target-status').textContent='正在查找编辑页…';
+    reviewDialog.showModal();
+    await refreshReviewTargets();
+  }
+
+  reviewTarget.addEventListener('change',updateReviewConfirm);
+  reviewDialog.addEventListener('close',()=>{if(!reviewDialog.open){pendingReview=null;clearTimeout(reviewTimer);}});
+  window.addEventListener('focus',scheduleReviewScan);
+  for(const event of ['onCreated','onRemoved','onReplaced'])globalThis.chrome?.tabs?.[event]?.addListener(scheduleReviewScan);
+  globalThis.chrome?.tabs?.onUpdated?.addListener((_id,change)=>{
+    if(change.url||change.title||change.status==='complete')scheduleReviewScan();
+  });
+
+  async function performWechatFill(tab) {
+    lastFill=null;activeFillTarget={tab,platform:'wechat'};setBusy(true);refreshControls();
+    try {fillBundle=await C.bundle(state);await run();}
     catch(error){q('result-status').textContent='未完成：'+error.message;toast(error.message,'error');}
-    finally{fillBundle=null;setBusy(false);}
+    finally{fillBundle=null;activeFillTarget=null;setBusy(false);}
+  }
+
+  async function withFilledWechat(check) {
+    const fill=lastFill;
+    if(!fill)throw Error('本次工作台还没有填入记录。');
+    setBusy(true);refreshControls();
+    try{
+      const tab=await checkedFillTarget(fill.tab,'wechat');
+      await attachDebugger(tab.id);
+      try{
+        const actual=await getEditorHtml(tab.id),result=C.compare(fill.html,actual);
+        if(await readField(tab.id,'#title')!==fill.title)result.issues.push('标题已变化');
+        if(await readField(tab.id,'#js_description')!==fill.summary)result.issues.push('摘要已变化');
+        await check(tab.id,result,fill);
+      }finally{await chrome.debugger.detach({tabId:tab.id}).catch(()=>{});}
+    }finally{setBusy(false);}
   }
 
   window.DraftStudio={
@@ -316,7 +413,7 @@
 
   authoring=DraftAuthorUI.mount({current:()=>state,activeId:()=>selected,setActive:selectBlock,mutate,render,ready,toast,download,
     busy:()=>busy,viewingOriginal:()=>showingOriginal,
-    inPlace(fn,first){if(first)checkpoint();fn(state);lastFill=null;layoutCache=null;saveSoon();q('article-stats').textContent=[...C.textOf(state.html)].length+' 字 · '+C.parse(state.html).querySelectorAll('img').length+' 张图片';},
+    inPlace(fn,first){if(first)checkpoint();fn(state);layoutCache=null;saveSoon();q('article-stats').textContent=[...C.textOf(state.html)].length+' 字 · '+C.parse(state.html).querySelectorAll('img').length+' 张图片';},
     cancelEdit(html,checkpointed){state.html=html;if(checkpointed)undoStack.pop();redoStack=[];saveSoon();}
   });
   q('author-outline-open').onclick=()=>{q('left-import-panels').hidden=true;q('author-outline-panel').hidden=false;q('author-import-open').setAttribute('aria-pressed','false');q('author-outline-open').setAttribute('aria-pressed','true');authoring.refresh();};
@@ -324,7 +421,6 @@
 
   q('source-file').onchange=handle(async e=>{await importFiles([...e.target.files]);e.target.value='';});
   q('source-folder').onchange=handle(async e=>{await importFiles([...e.target.files]);e.target.value='';});
-  q('bundle-folder').onchange=handle(async e=>{const files=[...e.target.files];e.target.value='';if(files.length)await importFiles(files,{expectBundle:true});});
   q('drop-zone').ondragover=e=>{e.preventDefault();q('drop-zone').classList.add('dragging');};
   q('drop-zone').ondragleave=()=>q('drop-zone').classList.remove('dragging');
   q('drop-zone').ondrop=handle(async e=>{e.preventDefault();q('drop-zone').classList.remove('dragging');await importFiles([...e.dataTransfer.files]);});
@@ -347,14 +443,19 @@
   for(const field of ['title','author','summary'])q('article-'+field).onchange=()=>mutate(()=>state.meta[field]=q('article-'+field).value);
   q('article-slot').onchange=()=>mutate(()=>{state.meta.slot=q('article-slot').value==='sub'?'sub':'head';});
   q('cover-file').onchange=handle(async e=>{const file=e.target.files[0];if(file){const data=await C.fileToData(file);mutate(()=>state.cover=data);}e.target.value='';});
-  q('cover-clear').onclick=()=>mutate(()=>state.cover=null);
+  q('cover-clear').onclick=()=>{if(state.cover)mutate(()=>state.cover=null);};
   q('mode-adjust').onclick=()=>mutate(()=>state.mode='adjust');
-  q('mode-preserve').onclick=()=>{
-    if(state.mode==='preserve')return;
+  q('mode-preserve').onclick=handle(async()=>{
+    if(busy||state.mode==='preserve')return;
     if(!confirm('恢复导入时的正文样式和内容？标题、作者、摘要与封面保留。此操作可以撤销。'))return;
     mutate(()=>{state.html=original?.html||state.html;state.settings={};state.typeStyles={};state.mode='preserve';selected=null;});
-  };
-  q('restore').onclick=()=>{if(original&&confirm('恢复本篇导入时的正文、图片和文章信息？此操作可以撤销。'))mutate(()=>{state=C.clone(original);selected=null;});};
+    await localizeRemoteImages();
+  });
+  q('restore').onclick=handle(async()=>{
+    if(busy||!original||!confirm('恢复本篇导入时的正文、图片和文章信息？此操作可以撤销。'))return;
+    mutate(()=>{state=C.clone(original);selected=null;});
+    await localizeRemoteImages();
+  });
   q('view-original').onclick=()=>{if(!original)return;showingOriginal=!showingOriginal;render();};
   q('preview-width').onchange=()=>q('paper').style.width=q('preview-width').value+'px';
   q('undo').onclick=()=>{if(undoStack.length){redoStack.push(C.clone(state));state=undoStack.pop();showingOriginal=false;render();saveSoon();}};
@@ -430,21 +531,31 @@
       }
     }
   }
+  function embedDownloadedImages(snapshot, bySource) {
+    if(!snapshot?.html)return;
+    const doc=C.parse(snapshot.html);
+    let changed=false;
+    for(const item of C.collectAssets(doc)){
+      const data=bySource.get(item.src);
+      if(data){C.setAssetSource(item,data);changed=true;}
+    }
+    if(changed)snapshot.html=doc.body.innerHTML;
+  }
   async function localizeRemoteImages({explicit=false}={}){
     const assets=C.preflight(state).images.filter(item=>/^https?:\/\//i.test(item.src));
     if(!assets.length)return;
     const statusLine=q('image-download-status');
     const planned=DraftImageLocalizer.candidates(assets);
     const origins=[...new Set(planned.groups.map(item=>item.origin))];
-    const granted=new Map();
-    for(const origin of origins){
-      const present=chrome.permissions?.contains
-        ? await chrome.permissions.contains({origins:[origin+'/*']}).catch(()=>false) : false;
-      granted.set(origin,!!present);
-    }
     setBusy(true);
     let result;
     try{
+      const granted=new Map();
+      for(const origin of origins){
+        const present=chrome.permissions?.contains
+          ? await chrome.permissions.contains({origins:[origin+'/*']}).catch(()=>false) : false;
+        granted.set(origin,!!present);
+      }
       result=await DraftImageLocalizer.run(assets,{
         concurrency:3,
         isAllowed:async origin=>granted.get(origin)===true,
@@ -456,15 +567,21 @@
       });
     }finally{setBusy(false);}
     if(result.replacements.size){
-      // One undo entry for the complete batch; original import stays untouched.
-      mutate(()=>{
-        const doc=C.parse(state.html);
-        for(const item of C.collectAssets(doc)){
-          const data=result.replacements.get(item.key);
-          if(data)C.setAssetSource(item,data);
-        }
-        state.html=doc.body.innerHTML;
-      });
+      const bySource=new Map();
+      for(const item of assets){
+        const data=result.replacements.get(item.key);
+        if(data)bySource.set(item.src,data);
+      }
+      // Use the original media bytes when restoring, even after the article tab closes.
+      embedDownloadedImages(original,bySource);
+      if(explicit){
+        mutate(()=>embedDownloadedImages(state,bySource));
+      }else{
+        embedDownloadedImages(state,bySource);
+        layoutCache=null;
+        render();
+        saveSoon();
+      }
     }
     const pending=C.preflight(state).images.filter(item=>/^https?:\/\//i.test(item.src)).length;
     const permissionNeeded=result.failures.filter(item=>item.type==='permission').length;
@@ -511,12 +628,12 @@
     const template=C.validateTemplate({version:1,name,settings:state.settings,typeStyles:state.typeStyles});
     const index=templateList.findIndex(item=>item.name===name);
     if(index>=0){if(!confirm('已存在同名样式，是否覆盖？'))return;templateList[index]=template;}else templateList.push(template);
-    updateTemplates();q('template-list').value=String(index>=0?index:templateList.length-1);q('name-dialog').close();toast('样式已保存到本机。');
+    updateTemplates();q('template-list').value=String(index>=0?index:templateList.length-1);refreshTemplateActions();q('name-dialog').close();toast('样式已保存到本机。');
   });
   q('template-apply').onclick=handle(async()=>{const template=currentTemplate();mutate(()=>{state.settings=C.clone(template.settings);state.typeStyles=C.clone(template.typeStyles);state.mode='adjust';});toast('已应用，局部特例保持优先。');});
   q('template-delete').onclick=handle(async()=>{const template=currentTemplate();if(confirm('删除样式“'+template.name+'”？')){templateList.splice(Number(q('template-list').value),1);updateTemplates();}});
   q('template-export').onclick=handle(async()=>{const template=currentTemplate();download(JSON.stringify(template,null,2),template.name+'.draft-style.json','application/json');});
-  q('template-file').onchange=handle(async e=>{const file=e.target.files[0];if(!file)return;if(file.size>100000)throw Error('样式文件过大。');const template=C.validateTemplate(JSON.parse(await file.text()));templateList.push(template);updateTemplates();q('template-list').value=String(templateList.length-1);e.target.value='';toast('样式已导入，点击“应用”使用。');});
+  q('template-file').onchange=handle(async e=>{const file=e.target.files[0];if(!file)return;if(file.size>100000)throw Error('样式文件过大。');const template=C.validateTemplate(JSON.parse(await file.text()));templateList.push(template);updateTemplates();q('template-list').value=String(templateList.length-1);refreshTemplateActions();e.target.value='';toast('样式已导入，点击“应用”使用。');});
 
   const distributionPatterns={
     yidian:['https://mp.yidianzixun.com/*'],
@@ -548,24 +665,6 @@
   function applyShrinkPolicy(){
     // yidian.js 在填入前读取这个全局策略；压的是上传副本，不写回准备包
     globalThis.DraftShrinkPolicy={mode:shrinkMode()};
-  }
-  async function refreshDistributionTargets(){
-    const platform=q('matrix-platform').value;
-    const select=q('matrix-target'),prior=select.value;
-    const tabs=await chrome.tabs.query({url:distributionPatterns[platform]});
-    const visible=tabs.filter(tab=>{try{return identifyDraftPlatform(tab.url||'')===platform;}catch{return false;}});
-    select.replaceChildren(new Option('选择已登录的空白文章编辑页',''));
-    for(const tab of visible)select.add(new Option(tab.title||DraftDistribution.PLATFORMS[platform].label+' · '+tab.id,String(tab.id)));
-    if(visible.some(tab=>String(tab.id)===prior))select.value=prior;
-    else if(visible.length===1)select.value=String(visible[0].id);
-  }
-  async function selectedDistributionTab(){
-    const id=Number(q('matrix-target').value);
-    if(!id)throw Error('请先打开并选择目标平台的空白文章编辑页。');
-    const tab=await chrome.tabs.get(id);
-    if(identifyDraftPlatform(tab.url||'')!==q('matrix-platform').value)
-      throw Error('目标网页平台与所选分发平台不一致。');
-    return tab;
   }
   function bundleSupportsPlatform(bundle,platform){
     const m=bundle.manifest;
@@ -695,8 +794,9 @@
       else {try{await verifyBundle(distributionBundle,platform);setDistributionBundle(distributionBundle);showProcessingLog(await DraftMatrixFormat.view(distributionBundle,platform));}
         catch(error){setDistributionBundle(null);throw error;}}
     }
-    distributionTitleForSelection();await refreshDistributionTargets();
+    distributionTitleForSelection();
   });
+  q('matrix-bundle-open').onclick=()=>q('matrix-bundle').click();
   q('matrix-bundle').onchange=handle(async e=>{
     const files=[...e.target.files];e.target.value='';
     if(!files.length)return;
@@ -705,7 +805,7 @@
     let loaded=await readBundle(files);
     const target=loaded.manifest.targetPlatform||'wechat';
     if(target==='wechat')
-      throw Error('这是微信准备包；左侧「选择准备包」可载入排版，微信填入请用上方「微信公众号」。');
+      throw Error('这是微信准备包；左侧「导入文件夹或微信准备包」可载入排版，可从顶栏操作微信填入。');
     if(!DraftDistribution.PLATFORMS[target])throw Error('无法识别的平台准备包：'+target);
     const selected=q('matrix-platform').value;
     const active=bundleSupportsPlatform(loaded,selected)?selected:target;
@@ -724,14 +824,12 @@
     if(runtimeFile)loaded.runtimeLog=(await runtimeFile.text()).split(/\r?\n/).filter(Boolean);
     setDistributionBundle(loaded);
     showProcessingLog(await DraftMatrixFormat.view(loaded,active));
-    await refreshDistributionTargets();
-    q('matrix-status').textContent='准备包已就绪；选择目标编辑页后点「检查并填入所选平台」，不会重新生成或改写正文。';
+    q('matrix-status').textContent='准备包已就绪；点「检查并填入所选平台」后选择目标编辑页，不会重新生成或改写正文。';
     toast('已选择'+DraftDistribution.PLATFORMS[active].label+'准备包');
   });
   q('matrix-bundle-clear').onclick=handle(async()=>{
     setDistributionBundle(null);
     q('matrix-status').textContent='已改用当前微信稿；填入时将重新生成目标平台准备包。';
-    await refreshDistributionTargets();
   });
   q('matrix-title').oninput=()=>distributionTitles.set(q('matrix-platform').value,q('matrix-title').value);
   q('matrix-summary').oninput=()=>distributionSummaries.set(q('matrix-platform').value,q('matrix-summary').value);
@@ -746,7 +844,6 @@
       +(on?'静图超限会自动重编码到上限内；GIF 动图拦下提示。'
           :'超限图片仅提示并停止填入，不做任何压缩。');
   };
-  q('matrix-refresh-targets').onclick=handle(refreshDistributionTargets);
   q('matrix-export').onclick=handle(async()=>{
     setBusy(true);
     try{
@@ -762,46 +859,44 @@
           +'准备包。请解压后在扩展「多平台填入」选择整个目录；这不等于已填入或保存。';
     }finally{setBusy(false);}
   });
-  q('matrix-fill').onclick=handle(async()=>{
-    setBusy(true);
+  async function performDistributionFill(tab,platform,bundle) {
+    distributionMode=true;activeFillTarget={tab,platform};fillBundle=bundle;setBusy(true);
     try{
-    const tab=await selectedDistributionTab();
-    const bundle=await prepareDistribution(),platform=q('matrix-platform').value;
-    const warnings=Array.isArray(bundle.report.warnings)?bundle.report.warnings.join('\n'):'';
-    if(!confirm('目标：'+(tab.title||DraftDistribution.PLATFORMS[platform].label)
-      +'\n文章：'+bundleTitleForPlatform(bundle,platform)+'\n正文图片：'+bundle.manifest.contentImages.length+' 张'
-      +'\n\n'+warnings+'\n\n确认目标编辑器为空白并开始填入？'))return;
-    distributionMode=true;distributionTab={id:tab.id};
-    fillBundle=bundle;setBusy(true);
-    applyShrinkPolicy();
-    const oversize=(typeof DraftDistribution.oversizeFor==='function'&&DraftDistribution.PROFILES?.[platform]?.upload?.maxBytes)
-      ? DraftDistribution.oversizeFor(DraftDistribution.PROFILES[platform],bundle.manifest) : [];
-    q('matrix-status').textContent='正在填入「'+DraftDistribution.PLATFORMS[platform].label
-      +'」编辑器：'+(bundle.manifest.contentImages||[]).length+' 张图片逐张上传'
-      +(oversize.length&&shrinkMode()==='auto'?'（其中 '+oversize.length+' 张超限，先压缩再上传）':'')
-      +'，完成后自动回读核对…';
-    try{const outcome=await run();
-      const active=outcome?.bundle||bundle;
-      q('matrix-status').textContent='已填入「'+DraftDistribution.PLATFORMS[platform].label
-        +'」编辑器（'+(active.manifest.contentImages||[]).length+' 张图）。'
-        +(outcome?.coverNote?outcome.coverNote+' ':'')
-        +'请核对正文、图片与封面对应位置后，在目标平台手动保存草稿。';
-      appendProcessingLog(q('matrix-status').textContent);
-    }
-    catch(error){
+      applyShrinkPolicy();
+      const oversize=(typeof DraftDistribution.oversizeFor==='function'&&DraftDistribution.PROFILES?.[platform]?.upload?.maxBytes)
+        ? DraftDistribution.oversizeFor(DraftDistribution.PROFILES[platform],bundle.manifest) : [];
+      q('matrix-status').textContent='正在填入「'+DraftDistribution.PLATFORMS[platform].label
+        +'」编辑器：'+(bundle.manifest.contentImages||[]).length+' 张图片逐张上传'
+        +(oversize.length&&shrinkMode()==='auto'?'（其中 '+oversize.length+' 张超限，先压缩再上传）':'')
+        +'，完成后自动回读核对…';
+      const outcome=await run();
+        const active=outcome?.bundle||bundle;
+        q('matrix-status').textContent='已填入「'+DraftDistribution.PLATFORMS[platform].label
+          +'」编辑器（'+(active.manifest.contentImages||[]).length+' 张图）。'
+          +(outcome?.coverNote?outcome.coverNote+' ':'')
+          +'请核对正文、图片与封面对应位置后，在目标平台手动保存草稿。';
+        appendProcessingLog(q('matrix-status').textContent);
+    }catch(error){
       q('matrix-status').textContent='填入未完成：'+(error.message||String(error))
         +'。如果页面已经部分写入，请在页面核对，不要直接重试覆盖。';
       appendProcessingLog(q('matrix-status').textContent);
-    }finally{fillBundle=null;distributionTab=null;distributionMode=false;}
-    }finally{setBusy(false);}
+    }finally{fillBundle=null;activeFillTarget=null;distributionMode=false;setBusy(false);}
+  }
+  q('matrix-fill').onclick=handle(async()=>{
+    if(busy)return;
+    authoring?.stopEditing();
+    const platform=q('matrix-platform').value;
+    let bundle;
+    setBusy(true);
+    try{bundle=await prepareDistribution();}finally{setBusy(false);}
+    const warnings=Array.isArray(bundle.report.warnings)?bundle.report.warnings:[];
+    await openFillReview(platform,bundleTitleForPlatform(bundle,platform),bundle.manifest.contentImages.length+' 张图',{warnings,bundle});
   });
 
   q('export-html').onclick=()=>{
     const check=C.preflight(state);if(check.images.some(img=>!C.imageData.test(img.src))&&!confirm('仍有未补齐的图片，导出后也可能缺失。继续导出？'))return;
     download('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+C.escape(state.meta.title)+'</title><body>'+C.render(state,true)+'</body></html>',(state.meta.title||'未命名文章').replace(/[<>:"/\\|?*]/g,'_')+'.html');
   };
-  q('refresh-targets').onclick=handle(refreshTargets);
-  q('refresh-source-tabs').onclick=handle(refreshTargets);
   // 推文封面：页面里只留着地址（一般在 mmbiz.qpic.cn），字节由扩展自己下载后放进封面位。
   // 下载失败不影响导入正文，封面仍可手动选择或用正文图设为封面。
   async function attachCover(captured){
@@ -829,34 +924,54 @@
     return captured;
   }
   q('import-wechat-url').onclick=handle(async()=>{
-    const value=q('wechat-source-url').value;WechatCapture.validateUrl(value);setBusy(true);
-    try{const captured=await WechatCapture.readUrl(value);q('wechat-source-url').value='';
+    if(busy)return;
+    const input=q('wechat-source-url'),url=WechatCapture.validateUrl(input.value);
+    setBusy(true);
+    try{
+      const captured=await WechatCapture.readUrl(url);
       await attachCover(captured);
-      if(await loadHtml(captured.html,captured)){sourceImageTabId=captured.sourceTabId;await localizeRemoteImages();}await refreshTargets();}
-    finally{setBusy(false);}
-  });
-  q('import-wechat-tab').onclick=handle(async()=>{
-    const tabId=q('source-tab').value;if(!tabId)throw Error('请先选择来源页面。');setBusy(true);
-    try{const captured=await WechatCapture.readTab(tabId);await attachCover(captured);
-      if(await loadHtml(captured.html,captured)){sourceImageTabId=captured.sourceTabId;await localizeRemoteImages();}}finally{setBusy(false);}
+      if(await loadHtml(captured.html,captured)){
+        input.value='';
+        sourceImageTabId=captured.sourceTabId;
+        await localizeRemoteImages();
+      }
+    }finally{setBusy(false);}
   });
   q('send').onclick=handle(async()=>{
-    const tab=await targetTab(),check=C.preflight(state),container=q('review-content');container.replaceChildren();
-    const line=document.createElement('p');line.textContent=`目标：${tab.title||'微信公众号'}\n文章：${state.meta.title} · ${check.characters} 字 · ${check.images.length} 张图`;line.style.whiteSpace='pre-wrap';container.append(line);
-    for(const [type,messages] of [['error',check.errors],['warning',check.warnings]])for(const message of messages){const p=document.createElement('p');p.className=type;p.textContent=message;container.append(p);}
-    q('review-fill').disabled=!!check.errors.length;q('review-dialog').showModal();
+    if(busy)return;
+    authoring?.stopEditing();
+    const check=C.preflight(state);
+    await openFillReview('wechat',state.meta.title,check.characters+' 字 · '+check.images.length+' 张图',check);
   });
-  q('review-fill').onclick=handle(async()=>{q('review-dialog').close();await performFill();});
-  q('retry-cover').onclick=handle(()=>performFill(true));
+  q('review-fill').onclick=handle(async()=>{
+    const review=pendingReview,tab=review?.targets.get(reviewTarget.value);
+    if(busy||!tab||review.errors.length)return;
+    pendingReview=null;
+    reviewDialog.close();
+    if(review.platform==='wechat')await performWechatFill(tab);
+    else await performDistributionFill(tab,review.platform,review.bundle);
+  });
+  q('retry-cover').onclick=handle(async()=>{
+    if(busy||!lastFill?.coverFailed||!state.cover)return;
+    const format=C.imageData.exec(state.cover)?.[1]?.toLowerCase();
+    if(!format||format==='gif')throw Error('请选择静态封面图片。');
+    const file=C.dataToFile(state.cover,'cover.'+(format==='jpeg'?'jpg':format));
+    try{
+      await withFilledWechat(async(tabId,result,fill)=>{
+        if(result.issues.length)throw Error('微信编辑页的内容已变化，请在编辑页核对后设置封面。');
+        q('result-status').textContent='正在重试微信封面…';
+        await setCoverFromFile(tabId,file);
+        fill.coverFailed=false;
+        q('result-status').textContent='封面已设置，请在微信中检查裁剪并保存。';
+      });
+    }catch(error){q('result-status').textContent='封面未完成：'+error.message;throw error;}
+  });
   q('verify-result').onclick=handle(async()=>{
-    if(!lastFill)throw Error('本次工作台还没有填入记录。');
-    const tab=await targetTab();if(tab.id!==lastFill.tabId)throw Error('请选择刚才实际填入的微信标签页。');
-    setBusy(true);let attached=false;
-    try{await attachDebugger(tab.id);attached=true;const actual=await getEditorHtml(tab.id),check=C.compare(lastFill.html,actual);
-      if(await readField(tab.id,'#title')!==lastFill.title)check.issues.push('标题已变化');
-      if(await readField(tab.id,'#js_description')!==lastFill.summary)check.issues.push('摘要已变化');
-      q('result-status').textContent=check.issues.length?'核对发现差异：'+check.issues.join('；'):'文字、图片顺序、标题与摘要核对通过。'+check.styleWarnings.join('')+'\n尚未保存，请在微信中检查视觉效果。';
-    }finally{if(attached)await chrome.debugger.detach({tabId:tab.id}).catch(()=>{});setBusy(false);}
+    if(busy)return;
+    await withFilledWechat((_id,result)=>{
+      q('result-status').textContent=result.issues.length?'核对发现差异：'+result.issues.join('；')
+        :'文字、图片顺序、标题与摘要核对通过。'+result.styleWarnings.join('')+'\n请在微信中检查视觉效果并保存。';
+    });
   });
   q('sample').onclick=handle(()=>loadHtml('<section style="padding:0 22px"><h2 style="font-size:21px;color:#345b49">把注意力，留给内容</h2><p>一篇文章的节奏，藏在段落之间的留白里。保留原样，让熟悉的表达继续；自由调整，让每一处细节都恰如其分。</p><blockquote>好的排版，让读者自然地读下去。</blockquote><p>你可以试着点击这段文字，单独修改字号或背景；也可以在右侧调整整篇文章的行距。</p><h3>从一个小改动开始</h3><p>把喜欢的排版保存为自己的样式，下次写作时再用。</p></section>',{title:'让一篇文章，读起来更舒服',author:'SyncPress 示例'}));
 
@@ -873,8 +988,6 @@
       if(savedMode==='warn'||savedMode==='auto')q('matrix-shrink').value=savedMode;
     }catch{}
     applyShrinkPolicy();
-    try{await refreshTargets();await refreshDistributionTargets();}
-    catch{q('result-status').textContent='请从浏览器扩展中打开工作台，以连接编辑页。';}
     readyResolve();
     // 进度镜像到「使用者正在看的那个面板」：多平台分发期间写 #matrix-status，
     // 否则写到微信面板的 #result-status（原先恒定写 #result-status，导致一点号

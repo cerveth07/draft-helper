@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SyncPress｜跨平台富文本排版与分发器",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "导入、编辑和保留富文本排版，预览格式差异，生成多平台准备包并由用户确认填入。",
   "permissions": [
     "activeTab",
@@ -32,5 +32,5 @@
     "default_title": "SyncPress · 排版与分发",
     "default_popup": "popup.html"
   },
-  "version_name": "1.0"
+  "version_name": "1.0.1"
 }

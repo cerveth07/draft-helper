@@ -8,7 +8,21 @@ const WechatCapture = (() => {
   }
   // Runs in the user's selected page, reads only. Never returns cookies, tokens, or the full URL.
   async function readInPage(properties) {
-    const read=selectors=>{for(const selector of selectors){const el=document.querySelector(selector);if(el)return (el.value||el.textContent||'').trim();}return '';};
+    function read(selectors) {
+      for(const selector of selectors){
+        const field=document.querySelector(selector);
+        const text=(field?.value??field?.textContent??'').trim();
+        if(text)return text;
+      }
+      return '';
+    }
+    function readArticleSummary() {
+      for(const selector of ['meta[property="og:description"]','meta[name="description"]','meta[itemprop="description"]']){
+        const summary=document.querySelector(selector)?.content.trim();
+        if(summary)return summary;
+      }
+      return typeof window.msg_desc==='string'?window.msg_desc.trim():'';
+    }
     // 推文封面：文章页把分享图放在 msg_cdn_url / og:image 里；草稿编辑器则只在封面预览里能看到。
     // 这里只取地址，图片字节由扩展自己下载，不经过页面会话。
     const readCover=()=>{
@@ -53,7 +67,9 @@ const WechatCapture = (() => {
         api.invoke({apiName:'mp_editor_get_content',sucCb:data=>{clearTimeout(timer);resolve(data?.content);},errCb:()=>{clearTimeout(timer);reject(Error('草稿正文读取失败，请确认已登录并打开具体图文编辑页。'));}});
       });
       if(typeof content!=='string'||!content.trim())throw Error('此草稿没有正文。');
-      return {html:content,title:read(['.title-editor__input .ProseMirror','#title']),author:read(['#author']),summary:read(['#js_description']),coverUrl:readCover(),sourceKind:'wechat-draft'};
+      const summary=read(['#js_description','textarea[placeholder*="摘要"]','textarea[placeholder*="简介"]',
+        '[contenteditable="true"][data-placeholder*="摘要"]','[contenteditable="true"][data-placeholder*="简介"]']);
+      return {html:content,title:read(['.title-editor__input .ProseMirror','#title']),author:read(['#author']),summary,coverUrl:readCover(),sourceKind:'wechat-draft'};
     }
     const source=document.querySelector('#js_content');
     if(!source || (!source.textContent.trim()&&!source.querySelector('img')))throw Error('页面中尚无可读文章。链接可能已过期、需要登录／验证，或尚未打开具体文章；请在浏览器中处理后重新读取。');
@@ -78,7 +94,7 @@ const WechatCapture = (() => {
     }
     copy.style.setProperty('visibility','visible');copy.style.setProperty('opacity','1');
     copy.style.removeProperty('width');copy.style.setProperty('max-width','100%');
-    return {html:copy.outerHTML,title:read(['#activity-name','h1']),author:read(['#js_name']),summary:'',coverUrl:readCover(),sourceKind:'wechat-article',
+    return {html:copy.outerHTML,title:read(['#activity-name','h1']),author:read(['#js_name']),summary:readArticleSummary(),coverUrl:readCover(),sourceKind:'wechat-article',
       warnings:emptyImages?['来源页有 '+emptyImages+' 处未提供图片地址、说明或背景的空白占位，已略过。']:[]};
   }
   // Narrow fallback for resources on the SAME authenticated WeChat origin only.
@@ -128,7 +144,7 @@ const WechatCapture = (() => {
   async function readTab(tabId) {
     const tab=await chrome.tabs.get(Number(tabId));validateUrl(tab.url||'');
     const results=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',func:readInPage,args:[DraftImport.properties]});
-    const result=results[0]?.result;if(!result?.html)throw Error('没有读到正文，请重新选择已打开的文章页面。');return {...result,sourceTabId:tab.id};
+    const result=results[0]?.result;if(!result?.html)throw Error('没有读到正文，请确认链接指向具体文章、预览或草稿页。');return {...result,sourceTabId:tab.id};
   }
   async function readUrl(value) {
     const url=validateUrl(value), comparable=value=>value.split('#')[0];
@@ -142,5 +158,5 @@ const WechatCapture = (() => {
     }
     return readTab(tab.id);
   }
-  return {validateUrl,readTab,readUrl,readInPage,readSameOriginImage};
+  return {validateUrl,readUrl,readInPage,readSameOriginImage};
 })();
